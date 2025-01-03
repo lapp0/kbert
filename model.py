@@ -206,6 +206,8 @@ class KBERT(nn.Module):
             x = x + self.skip_weights[i] * skip_connections.pop()
             x = self.blocks[self.num_encoder_layers + i](x, ve_dec[i], x0, block_mask)
 
+        return x
+
     def forward(
             self,
             input_ids: torch.Tensor,
