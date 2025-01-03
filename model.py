@@ -212,27 +212,27 @@ class KBERT(nn.Module):
             sliding_window_size: torch.Tensor,
             mlm_probability: torch.Tensor) -> torch.Tensor:
         input_ids, labels = self.masker(input_ids, mlm_probability)
-        docs = (input_ids == self.cls_id).cumsum(0)
-        last_hs = self.encoder_pass(input_ids, sliding_window_size, docs)
+        last_hs = self.encoder_pass(input_ids, sliding_window_size)
         logits = self.get_logits(last_hs)
         return self.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
 
 
-class MLMMasker:
+class MLMMasker(nn.Module):
     def __init__(self, tokenizer):
         """
         80% are replaced with [MASK], 10% are replaced with a random amino acid token, and 10% are unchanged.
         """
+        super().__init__()
         self.mask_token_id = tokenizer.mask_token_id
-        self.special_tokens = torch.tensor(tokenizer.all_special_ids)
-        self.standard_tokens = torch.tensor([tok_id for tok_id in tokenizer.vocab.values() if tok_id not in self.special_tokens])
+        standard_tokens = [tok_id for tok_id in tokenizer.vocab.values() if tok_id not in tokenizer.all_special_ids]
+        self.register_buffer("standard_tokens", torch.tensor(standard_tokens, dtype=torch.int32))
+        self.register_buffer("special_tokens", torch.tensor(tokenizer.all_special_ids, dtype=torch.int32))
 
     def __call__(self, input_ids: torch.Tensor, mlm_probability: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         labels = input_ids.clone()
 
         # Create special tokens mask using broadcasting
-        special_tokens = self.special_tokens.to(input_ids.device)
-        special_tokens_mask = (input_ids[..., None] == special_tokens).any(-1)
+        special_tokens_mask = (input_ids[..., None] == self.special_tokens).any(-1)
 
         # Create probability matrix and mask special tokens
         probability_matrix = torch.ones_like(labels, dtype=torch.float) * mlm_probability
@@ -251,7 +251,8 @@ class MLMMasker:
             torch.full_like(probability_matrix, 0.5)
         ).bool() & masked_indices & ~indices_replaced
         random_token_idxs = torch.randint(
-            0, self.standard_tokens.shape, (replacement_idxs,), dtype=input_ids.dtype, device=labels.device
+            0, self.standard_tokens.numel(), (replacement_idxs.sum(),),
+            dtype=input_ids.dtype, device=replacement_idxs.device
         )
         input_ids[replacement_idxs] = self.standard_tokens[random_token_idxs]
 
