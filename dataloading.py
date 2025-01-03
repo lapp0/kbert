@@ -87,7 +87,7 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             # if adding sample exceeds the batch size resulting in truncation, pad to end of batch, starting a fresh batch
             if len(sample) + curr_batch_len >= self.local_batch_size:
                 num_pad = self.local_batch_size - curr_batch_len
-                processed_chunks.append(torch.full((num_pad,), self.pad_id))
+                processed_chunks.append(torch.full((num_pad,), self.pad_id, dtype=torch.uint16))
                 curr_batch_len = 0
 
             # if len(sample) > local batch size, chunk evenly, making multiple padded batches, starting a fresh batch
@@ -95,12 +95,13 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
                 for split_sample in torch.chunk(sample, len(sample) // self.local_batch_size + 1):
                     processed_chunks.append(split_sample)
                     num_pad = self.local_batch_size - len(split_sample)
-                    processed_chunks.append(torch.full((num_pad,), self.pad_id))
+                    processed_chunks.append(torch.full((num_pad,), self.pad_id, dtype=torch.uint16))
                 curr_batch_len = 0
                 continue
 
             processed_chunks.append(sample)
             curr_batch_len += len(sample)
+            curr_batch_len = 0 if curr_batch_len == self.local_batch_size else curr_batch_len
 
         self._leftover_tokens = raw_tokens[curr_eos+1:]
         self.tokens = torch.cat(processed_chunks, dim=0)
