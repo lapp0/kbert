@@ -1,23 +1,5 @@
 import os
 import sys
-with open(sys.argv[0]) as f:
-    code = f.read() # read the code of this file ASAP, for logging
-
-with open('optimizer.py', 'r', encoding='utf-8') as f:
-    source_code = f.read()
-    code += source_code
-
-with open('model.py', 'r', encoding='utf-8') as f:
-    source_code = f.read()
-    code += source_code
-
-with open('utils.py', 'r', encoding='utf-8') as f:
-    source_code = f.read()
-    code += source_code
-
-with open('dataloading.py', 'r', encoding='utf-8') as f:
-    source_code = f.read()
-    code += source_code
 
 import argparse
 import uuid
@@ -27,40 +9,46 @@ import math
 import torch
 import torch.distributed as dist
 import torch._inductor.config as config
-from transformers import EsmTokenizer
+from transformers import AutoTokenizer
 from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
 from optimizer import Muon
-from model import ModelConfig, ESM, CastedLinear
+from model import ModelConfig, KBERT, CastedLinear
 from dataloading import DistributedPaddedDataLoader
 
 
+code = open(sys.argv[0]).read()
+code += open('optimizer.py', 'r', encoding='utf-8').read()
+code += open('model.py', 'r', encoding='utf-8').read()
+code += open('utils.py', 'r', encoding='utf-8').read()
+code += open('dataloading.py', 'r', encoding='utf-8').read()
+
+
 def get_args():
-    parser = argparse.ArgumentParser(description='ESM2 training arguments')
+    parser = argparse.ArgumentParser(description='KBERT training arguments')
 
     # Model hyperparams
-    parser.add_argument('--vocab_size', type=int, default=33, help='vocabulary size')
     parser.add_argument('--num_hidden_layers', type=int, default=12, help='number of transformer layers')
     parser.add_argument('--num_attention_heads', type=int, default=6, help='number of attention heads (head dim 128 suggested by @Grad62304977)')
     parser.add_argument('--hidden_size', type=int, default=768, help='model hidden dimension size')
 
     # Data hyperparams
-    parser.add_argument('--input_bin', type=str, default='data/omgprot50/omgprot50_train_*.bin', help='input .bins to train on')
-    parser.add_argument('--input_valid_bin', type=str, default='data/omgprot50/omgprot50_valid_*.bin', help='input .bins to eval validation loss on')
-    parser.add_argument('--input_test_bin', type=str, default='data/omgprot50/omgprot50_test_*.bin', help='input .bins to eval test loss on')
+    parser.add_argument('--input_bin', type=str, default='data/fineweb-edu/fwedu_train_*.bin', help='input .bins to train on')
+    parser.add_argument('--input_valid_bin', type=str, default='data/fineweb-edu/fwedu_valid_*.bin', help='input .bins to eval validation loss on')
+    parser.add_argument('--input_test_bin', type=str, default='data/fineweb-edu/fwedu_test_*.bin', help='input .bins to eval test loss on')
 
     # Optimization hyperparams
-    parser.add_argument('--batch_size', type=int, default=4*64*1024, help='batch size, in tokens, across all devices')
+    parser.add_argument('--batch_size', type=int, default=8*64*1024, help='batch size, in tokens, across all devices')
     parser.add_argument('--grad_accum', type=int, default=1, help='manually set number of gradient accumulation steps, else, will be ddp_world_size')
     parser.add_argument('--num_steps', type=int, default=20000, help='number of iterations to run')
     parser.add_argument('--warmup_steps', type=int, default=100, help='number of warmup steps')
     parser.add_argument('--cooldown_steps', type=int, default=2000, help='number of cooldown steps')
-    parser.add_argument('--max_length', type=int, default=1024, help='maximum sequence length')
+    parser.add_argument('--max_length', type=int, default=2**16, help='maximum sequence length')
 
     # Evaluation and logging hyperparams
-    parser.add_argument('--valid_loss_every', type=int, default=1000, help='every how many steps to evaluate val loss? 0 for only at the end')
-    parser.add_argument('--hf_model_name', type=str, default='Synthyra/esm_speedrun', help='huggingface model name')
+    parser.add_argument('--valid_loss_every', type=int, default=250, help='every how many steps to evaluate val loss? 0 for only at the end')
+    parser.add_argument('--hf_model_name', type=str, default='lapp0/kbert_speedrun', help='huggingface model name')
     parser.add_argument('--token', type=str, default=None, help='huggingface token')
     parser.add_argument('--save_every', type=int, default=None, help='save every how many steps? None for no saving')
     args = parser.parse_args()
@@ -160,7 +148,7 @@ if __name__ == '__main__':
     print0(f'Total batch size: {args.batch_size} tokens')
 
     # load tokens
-    tokenizer = EsmTokenizer.from_pretrained('facebook/esm2_t6_8M_UR50D')
+    tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base")
     eos_id, pad_id = tokenizer.eos_token_id, tokenizer.pad_token_id
     train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
     valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
@@ -170,7 +158,7 @@ if __name__ == '__main__':
     print0(f'Testing DataLoader: {len(test_loader.files)} files')
     print0('='*100, logonly=True)
 
-    model = ESM(model_config)
+    model = KBERT(model_config)
     model = model.cuda().bfloat16()
     for m in model.modules():
         if isinstance(m, CastedLinear):

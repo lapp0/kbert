@@ -1,38 +1,24 @@
+# Based on projects below:
+# https://github.com/KellerJordan/modded-nanogpt
+# and https://github.com/Synthyra/SpeedRunningESM2
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
-from transformers import EsmTokenizer, PretrainedConfig, PreTrainedModel
-from typing import Optional, Tuple, List, Any
-try:
-    from .utils import ProteinMasker
-except ImportError:
-    from utils import ProteinMasker
+from transformers import PreTrainedModel
+from typing import Tuple, List
+from dataclasses import dataclass
+from transformers import AutoTokenizer
 
 
-class ModelConfig(PretrainedConfig):
-    """
-    33 tokens: https://huggingface.co/Synthyra/ESMplusplus_large/blob/main/modeling_esm_plusplus.py#L868-L874
-    ESM2-8M has 6 layers, 20 heads, 320 hidden dim: https://huggingface.co/facebook/esm2_t6_8M_UR50D/blob/main/config.json
-    ESM2-35M has 12 layers, 20 heads, 480 hidden dim: https://huggingface.co/facebook/esm2_t12_35M_UR50D/blob/main/config.json
-    ESM2-150M has 30 layers, 20 heads, 640 hidden dim: https://huggingface.co/facebook/esm2_t30_150M_UR50D/blob/main/config.json
-    ESM2-650M has 33 layers, 20 heads, 1280 hidden dim: https://huggingface.co/facebook/esm2_t33_650M_UR50D/blob/main/config.json
-    """
-    def __init__(
-        self,
-        vocab_size=33,
-        hidden_size=768,
-        num_hidden_layers=12,
-        num_attention_heads=12,
-        expansion_ratio=8/3,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self.vocab_size = vocab_size
-        self.hidden_size = hidden_size
-        self.num_hidden_layers = num_hidden_layers
-        self.num_attention_heads = num_attention_heads
-        self.expansion_ratio = expansion_ratio
+@dataclass
+class ModelConfig:
+    tokenizer_uri: str = "answerdotai/ModernBERT-base"
+    num_layers: int = 12
+    num_attention_heads: int = 6
+    model_dim: int = 768
+    intermediate_dim: float = 768 * 4
+
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:
@@ -78,37 +64,33 @@ class SelfAttention(nn.Module):
         self.num_attention_heads = num_attention_heads
         self.qkv = CastedLinear(dim, 3 * dim)
         self.lambdas = nn.Parameter(torch.tensor([0.5, 0.5]))
-        self.rotary = Rotary(dim // num_attention_heads) # dim // num_attention_heads = head_dim
+        self.rotary = Rotary(dim // num_attention_heads)
         self.o_proj = CastedLinear(dim, dim)
-        self.o_proj.weight.data.zero_() # zero init suggested by @Grad6230497
+        self.o_proj.weight.data.zero_()
 
     def forward(self, x: torch.Tensor, vi: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
-        B, T = x.size(0), x.size(1) # batch size, sequence length
+        B, T = x.size(0), x.size(1)  # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
         qkv = self.qkv(x)
         q, k, v = qkv.chunk(3, dim=-1)
         q = q.view(B, T, self.num_attention_heads, -1)
         k = k.view(B, T, self.num_attention_heads, -1)
         v = v.view(B, T, self.num_attention_heads, -1)
-        v = self.lambdas[0] * v + self.lambdas[1] * vi.view_as(v) # @KoszarskyB & @Grad62304977
-        q, k = norm(q), norm(k) # QK norm @Grad62304977
+        v = self.lambdas[0] * v + self.lambdas[1] * vi.view_as(v)
+        q, k = norm(q), norm(k)
         q, k = self.rotary(q), self.rotary(k)
         y = flex_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), block_mask=block_mask, enable_gqa=True)
-        y = y.transpose(1, 2).contiguous().view_as(x) # re-assemble all head outputs side by side
+        y = y.transpose(1, 2).contiguous().view_as(x)  # re-assemble all head outputs side by side
         y = self.o_proj(y)
         return y
 
 
-def correction_fn(expansion_ratio: float, d_model: int) -> int:
-    return int(((expansion_ratio * d_model) + 255) // 256 * 256)
-
-
 class MLP(nn.Module):
-    def __init__(self, dim, expansion_ratio):
+    def __init__(self, dim, intermediate_dim):
         super().__init__()
-        self.up   = CastedLinear(dim, correction_fn(expansion_ratio, dim))
-        self.down = CastedLinear(correction_fn(expansion_ratio, dim), dim)
-        self.down.weight.data.zero_() # zero init suggested by @Grad62304977
+        self.up = CastedLinear(dim, intermediate_dim)
+        self.down = CastedLinear(intermediate_dim, dim)
+        self.down.weight.data.zero_()
         self.relu = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -121,7 +103,7 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.attn = SelfAttention(config.hidden_size, config.num_attention_heads)
-        self.mlp = MLP(config.hidden_size, config.expansion_ratio)
+        self.mlp = MLP(config.hidden_size, config.intermediate_dim)
         self.lambdas = nn.Parameter(torch.tensor([1., 0.]))
 
     def forward(self, x: torch.Tensor, vi: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
@@ -145,15 +127,15 @@ class ValueEmbedding(nn.Module):
         return ve
 
 
-class ESM(PreTrainedModel):
+class KBERT(PreTrainedModel):
     config_class = ModelConfig
     def __init__(self, config: ModelConfig):
         super().__init__(config)
         self.config = config
-        tokenizer = EsmTokenizer.from_pretrained('facebook/esm2_t6_8M_UR50D')
-        self.masker = ProteinMasker(tokenizer)
+        tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
+        self.masker = MLMMasker(tokenizer)
         self.cls_id = tokenizer.cls_token_id
-        self.vocab_size = tokenizer.vocab_size
+        self.vocab_size = (tokenizer.vocab_size // 256 + 1) * 256  # round up to nearest 256
         self.num_hidden_layers = config.num_hidden_layers
 
         # U-net design by @brendanh0gan
@@ -172,13 +154,6 @@ class ESM(PreTrainedModel):
         self.lm_head.weight.data.zero_() # @Grad62304977
         self.cross_entropy = nn.CrossEntropyLoss()
 
-    def embed_forward(self, input_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
-        x = self.embed(input_ids[None])
-        x = norm(x) # @Grad62304977
-        x0 = x
-        ve = self.value_embeds(input_ids)
-        return x, x0, ve
-
     def get_logits(self, x: torch.Tensor) -> torch.Tensor:
         x = norm(x)
         logits = self.lm_head(x)
@@ -186,47 +161,23 @@ class ESM(PreTrainedModel):
         logits = logits.float()
         return logits
 
-    def flex_forward(self, input_ids: torch.Tensor, sliding_window_size: torch.Tensor) -> torch.Tensor:
-        input_ids = input_ids.flatten() # flex_attention needs batch 1
-        docs = (input_ids == self.cls_id).cumsum(0)
-
-        def doc_mask_mod(b, h, q_idx, kv_idx):
-            bidirectional_sliding_window_mask = torch.abs(q_idx - kv_idx) < sliding_window_size
-            doc_mask = docs[q_idx] == docs[kv_idx]
-            return bidirectional_sliding_window_mask & doc_mask
-
-        S = len(input_ids)
-        block_mask = create_block_mask(doc_mask_mod, None, None, S, S)
-
-        x, x0, ve = self.embed_forward(input_ids)
-        ve_enc, ve_dec = ve[:self.num_encoder_layers], ve[self.num_encoder_layers:]
-
-        # Store outputs for U-Net skip connections
-        skip_connections = []
-        # Encoder pass - process only the first half of the blocks
-        for i in range(self.num_encoder_layers):
-            x = self.blocks[i](x, ve_enc[i], x0, block_mask)
-            skip_connections.append(x)
-        # Decoder pass - process the remaining blocks with weighted skip connections
-        for i in range(self.num_decoder_layers):
-            x = x + self.skip_weights[i] * skip_connections.pop()
-            # U-net structure on token value embeddings by @leloykun
-            x = self.blocks[self.num_encoder_layers + i](x, ve_dec[i], x0, block_mask)
-
-        return self.get_logits(x)
-
-    def get_vector_embeddings(self, input_ids: torch.Tensor, sliding_window_size: torch.Tensor) -> torch.Tensor:
+    def encoder_pass(self, input_ids, sliding_window_size):
         input_ids = input_ids.flatten()
         docs = (input_ids == self.cls_id).cumsum(dim=0)  # shape: [S]
-        
+
         def doc_mask_mod(b, h, q_idx, kv_idx):
             bidirectional_sliding_window_mask = torch.abs(q_idx - kv_idx) < sliding_window_size
             doc_mask = docs[q_idx] == docs[kv_idx]
             return bidirectional_sliding_window_mask & doc_mask
-        
+
         S = len(input_ids)
         block_mask = create_block_mask(doc_mask_mod, None, None, S, S)
-        x, x0, ve = self.embed_forward(input_ids)  # x shape: [S, hidden_size]
+
+        x = self.embed(input_ids[None])
+        x = norm(x) # @Grad62304977
+        x0 = x
+        ve = self.value_embeds(input_ids)
+
         ve_enc, ve_dec = ve[:self.num_encoder_layers], ve[self.num_encoder_layers:]
         skip_connections = []
         for i in range(self.num_encoder_layers):
@@ -236,33 +187,6 @@ class ESM(PreTrainedModel):
         for i in range(self.num_decoder_layers):
             x = x + self.skip_weights[i] * skip_connections.pop()
             x = self.blocks[self.num_encoder_layers + i](x, ve_dec[i], x0, block_mask)
-        
-        x = x.view(-1, self.config.hidden_size)
-        # At this point, x is shape [S, hidden_size]
-        # We want to mean-pool across each document index.
-        # Convert docs to 0-based so we can do nice indexing
-        num_docs = docs.max().item()
-        doc_ids = docs - 1  # Now documents are labeled [0, 1, 2, ...]
-        # Mean-pool across tokens belonging to each doc
-        doc_embeds = []
-        for doc_idx in range(num_docs):
-            mask = (doc_ids == doc_idx)
-            # Collect all token embeddings for this doc and average
-            doc_embeds.append(x[mask].mean(dim=0))
-        # Stack into [num_documents, hidden_size]
-        return torch.stack(doc_embeds, dim=0)
-
-    def inference(
-            self,
-            input_ids: torch.Tensor,
-            sliding_window_size: torch.Tensor,
-            mlm_probability: torch.Tensor) -> Tuple[torch.Tensor, Any, Any]:
-        input_ids, labels = self.masker(input_ids, mlm_probability)
-        logits = self.flex_forward(input_ids, sliding_window_size)
-        loss = None
-        if labels is not None:
-            loss = self.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
-        return logits, loss, labels
 
     def forward(
             self,
@@ -270,5 +194,48 @@ class ESM(PreTrainedModel):
             sliding_window_size: torch.Tensor,
             mlm_probability: torch.Tensor) -> torch.Tensor:
         input_ids, labels = self.masker(input_ids, mlm_probability)
-        logits = self.flex_forward(input_ids, sliding_window_size)
+        docs = (input_ids == self.cls_id).cumsum(0)
+        last_hs = self.encoder_pass(input_ids, sliding_window_size, docs)
+        logits = self.get_logits(last_hs)
         return self.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
+
+
+class MLMMasker:
+    def __init__(self, tokenizer):
+        """
+        80% are replaced with [MASK], 10% are replaced with a random amino acid token, and 10% are unchanged.
+        """
+        self.mask_token_id = tokenizer.mask_token_id
+        self.special_tokens = torch.tensor(tokenizer.all_special_ids)
+        self.standard_tokens = torch.tensor([tok_id for tok_id in tokenizer.vocab.values() if tok_id not in self.special_tokens])
+
+    def __call__(self, input_ids: torch.Tensor, mlm_probability: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        labels = input_ids.clone()
+
+        # Create special tokens mask using broadcasting
+        special_tokens = self.special_tokens.to(input_ids.device)
+        special_tokens_mask = (input_ids[..., None] == special_tokens).any(-1)
+
+        # Create probability matrix and mask special tokens
+        probability_matrix = torch.full_like(labels, mlm_probability.item(), dtype=torch.float)
+        probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
+
+        # Create masked indices
+        masked_indices = torch.bernoulli(probability_matrix).bool()
+        labels[~masked_indices] = -100  # We only compute loss on masked tokens
+
+        # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
+        indices_replaced = torch.bernoulli(torch.full_like(probability_matrix, 0.8)).bool() & masked_indices
+        input_ids[indices_replaced] = self.mask_token_id
+
+        # 10% of the time, we replace masked input tokens with random word
+        replacement_idxs = torch.bernoulli(
+            torch.full_like(probability_matrix, 0.5)
+        ).bool() & masked_indices & ~indices_replaced
+        random_token_idxs = torch.randint(
+            0, self.standard_tokens.shape, (replacement_idxs,), dtype=input_ids.dtype, device=labels.device
+        )
+        input_ids[replacement_idxs] = self.standard_tokens[random_token_idxs]
+
+        # The rest of the time (10% of the time) we keep the masked input tokens unchanged
+        return input_ids, labels

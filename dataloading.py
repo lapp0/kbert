@@ -10,9 +10,9 @@ def _load_data_shard(file: Path):
     assert header[1] == 1, 'unsupported version'
     num_tokens = int(header[2]) # number of tokens (claimed)
     with file.open('rb', buffering=0) as f:
-        tokens = torch.empty(num_tokens, dtype=torch.uint8, pin_memory=True)
+        tokens = torch.empty(num_tokens, dtype=torch.uint16, pin_memory=True)
         f.seek(256 * 4)
-        nbytes = f.readinto(tokens.numpy())
+        nbytes = 2 * f.readinto(tokens.numpy())
         assert nbytes == num_tokens, 'number of tokens read does not match header?'
     return tokens
 
@@ -53,7 +53,7 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
     def __init__(self, filename_pattern, seq_len, process_rank, num_processes, eos_id, pad_id, max_epochs=1):
         self.eos_id = eos_id
         self.pad_id = pad_id
-        self._leftover_tokens = torch.empty(0, dtype=torch.uint8)
+        self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
         self.max_epochs = max_epochs
         super().__init__(filename_pattern, seq_len, process_rank, num_processes)
 
@@ -68,8 +68,8 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
         else:
             raw_tokens = self._leftover_tokens
         if not raw_tokens.numel():
-            self._leftover_tokens = torch.empty(0, dtype=torch.uint8)
-            self.tokens = torch.empty(0, dtype=torch.uint8)
+            self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
+            self.tokens = torch.empty(0, dtype=torch.uint16)
             return
 
         processed_chunks = []
