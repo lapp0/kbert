@@ -235,7 +235,7 @@ class MLMMasker:
         special_tokens_mask = (input_ids[..., None] == special_tokens).any(-1)
 
         # Create probability matrix and mask special tokens
-        probability_matrix = torch.full_like(labels, mlm_probability.item(), dtype=torch.float)
+        probability_matrix = torch.ones_like(labels, dtype=torch.float) * mlm_probability
         probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
 
         # Create masked indices
