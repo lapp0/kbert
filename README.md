@@ -18,6 +18,16 @@ torchrun --standalone --nproc_per_node=8 trainer.py
 torchrun --standalone --nproc_per_node=4 trainer.py --flex_kernel_consumer
 ```
 
+### Push to Huggingaface Hub While Training
+Only need to save your hub token once:
+```
+HF_TOKEN=<YOUR HUGGINGFACE TOKEN> python3 -c "from huggingface_hub.hf_api import HfFolder; HfFolder.save_token('${HF_TOKEN}')"
+```
+Run:
+```
+torchrun --standalone --nproc_per_node=8 trainer.py --hf_model_name <YOUR_HF_MODEL_URI>
+```
+
 
 ## Benchmarks to match
 TODO

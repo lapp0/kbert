@@ -42,7 +42,7 @@ class TrainingArguments:
     max_length: int = 2**16
     # Evaluation and logging hyperparams
     valid_loss_every: int = 250
-    hf_model_name: Optional[str] = "lapp0/kbert_speedrun"
+    hf_model_name: Optional[str] = None
     save_every: Optional[int] = None
 
 
