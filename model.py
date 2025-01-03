@@ -18,11 +18,11 @@ class ModelConfig:
     model_dim: int = 768
     intermediate_dim: float = 768 * 4
 
-    flex_kernel_consumer: bool = False
+    consumer_hardware: bool = False
 
     @property
     def flex_kernel_options(self):
-        if self.flex_kernel_consumer:
+        if self.consumer_hardware:
             # 3090/4090 settings used if flex_kernel_consumer == True
             # https://github.com/pytorch/pytorch/issues/133254#issuecomment-2408710459
             return {
