@@ -128,6 +128,8 @@ def train(args, model_config):
     print0(f'Testing DataLoader: {len(test_loader.files)} files')
     print0('='*100, logonly=True)
 
+    train_input_ids = train_loader.next_batch()
+
     model = KBERT(model_config)
     model = model.cuda().bfloat16()
     for m in model.modules():
@@ -174,15 +176,20 @@ def train(args, model_config):
 
     def lerp_put(frac_done, start_val, end_val, precision, storage):
         val = ((1 - frac_done) * start_val + frac_done * end_val) // precision * precision
-        if val > storage:
+        if val != storage:
             val = val if torch.is_floating_point(storage) else int(val)
             storage.copy_(val, non_blocking=True)
 
-    mlm_probability = torch.tensor(0.50, device='cuda')
     final_mlm_prob = torch.tensor(0.15, device='cuda')
-    sliding_window_size = torch.tensor(1024 - 128, dtype=torch.int32, device='cuda')
+
+    mlm_probability = torch.tensor(-1.0, device='cuda')
+    sliding_window_size = torch.tensor(-1, dtype=torch.int32, device='cuda')
     update_mlm_probability = partial(lerp_put, start_val=0.5, end_val=0.12, precision=0.01)
     update_sw_size = partial(lerp_put, start_val=1024, end_val=args.max_length, precision=128)
+
+    update_mlm_probability(0.0, storage=mlm_probability)
+    update_sw_size(0.0, storage=sliding_window_size)
+
 
     # Start training loop
     training_time_ms = 0
@@ -262,8 +269,8 @@ def train(args, model_config):
                     stack.enter_context(model.no_sync())
                 #if step >= 5:
                 #    stack.enter_context(torch.compiler.set_stance(skip_guard_eval_unsafe=True))
-                input_ids = train_loader.next_batch()
-                model(input_ids, sliding_window_size, mlm_probability=mlm_probability).backward()
+                model(train_input_ids, sliding_window_size, mlm_probability=mlm_probability).backward()
+                train_input_ids = train_loader.next_batch()
         if train_accumulation_steps != 1:
             for p in model.parameters():
                 p.grad /= train_accumulation_steps
