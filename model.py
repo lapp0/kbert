@@ -18,20 +18,6 @@ class ModelConfig:
     model_dim: int = 768
     intermediate_dim: float = 768 * 4
 
-    consumer_hardware: bool = False
-
-    @property
-    def flex_kernel_options(self):
-        if self.consumer_hardware:
-            # 3090/4090 settings used if flex_kernel_consumer == True
-            # https://github.com/pytorch/pytorch/issues/133254#issuecomment-2408710459
-            return {
-                "BLOCK_M": 64, "BLOCK_N": 64,  # forward
-                "BLOCK_M1": 32, "BLOCK_N1": 64, "BLOCK_M2": 64, "BLOCK_N2": 32  # backwards
-            }
-        else:
-            return None
-
 
 def norm(x: torch.Tensor) -> torch.Tensor:
     return F.rms_norm(x, (x.size(-1),))
@@ -70,9 +56,8 @@ class Rotary(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, dim, num_attention_heads, flex_kernel_options):
+    def __init__(self, dim, num_attention_heads):
         super().__init__()
-        self.flex_kernel_options = flex_kernel_options
         assert dim % num_attention_heads == 0
         self.num_attention_heads = num_attention_heads
         self.qkv = CastedLinear(dim, 3 * dim)
@@ -92,13 +77,7 @@ class SelfAttention(nn.Module):
         v = self.lambdas[0] * v + self.lambdas[1] * vi.view_as(v)
         q, k = norm(q), norm(k)
         q, k = self.rotary(q), self.rotary(k)
-        y = flex_attention(
-            q.transpose(1, 2),
-            k.transpose(1, 2),
-            v.transpose(1, 2),
-            block_mask=block_mask,
-            kernel_options=self.flex_kernel_options
-        )
+        y = flex_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), block_mask=block_mask)
         y = y.transpose(1, 2).contiguous().view_as(x)  # re-assemble all head outputs side by side
         y = self.o_proj(y)
         return y
@@ -121,7 +100,7 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.attn = SelfAttention(config.model_dim, config.num_attention_heads, config.flex_kernel_options)
+        self.attn = SelfAttention(config.model_dim, config.num_attention_heads)
         self.mlp = MLP(config.model_dim, config.intermediate_dim)
         self.lambdas = nn.Parameter(torch.tensor([1., 0.]))
 

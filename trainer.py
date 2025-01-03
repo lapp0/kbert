@@ -8,6 +8,7 @@ import argparse
 import uuid
 import time
 import contextlib
+from functools import partial
 import math
 import torch
 import torch.distributed as dist
@@ -54,24 +55,14 @@ def get_param_count(model):
 
 
 def train(args, model_config):
-    # set up DDP (distributed data parallel) if available, otherwise single GPU
-    if 'RANK' in os.environ:
-        ddp_rank = int(os.environ['RANK'])
-        ddp_local_rank = int(os.environ['LOCAL_RANK'])
-        ddp_world_size = int(os.environ['WORLD_SIZE'])
-        device = torch.device(f'cuda:{ddp_local_rank}')
-        torch.cuda.set_device(device)
-        dist.init_process_group(backend='nccl', device_id=device)
-        dist.barrier()
-        master_process = (ddp_rank == 0)
-    else:
-        ddp_rank = 0
-        ddp_local_rank = 0
-        ddp_world_size = 1
-        device = torch.device('cuda:0')
-        torch.cuda.set_device(device)
-        master_process = True
-
+    ddp_rank = int(os.environ['RANK'])
+    ddp_local_rank = int(os.environ['LOCAL_RANK'])
+    ddp_world_size = int(os.environ['WORLD_SIZE'])
+    device = torch.device(f'cuda:{ddp_local_rank}')
+    torch.cuda.set_device(device)
+    dist.init_process_group(backend='nccl', device_id=device)
+    dist.barrier()
+    master_process = (ddp_rank == 0)
     print(f'using device: {device}')
 
     # begin logging
@@ -179,10 +170,20 @@ def train(args, model_config):
 
     schedulers = [torch.optim.lr_scheduler.LambdaLR(opt, get_lr) for opt in optimizers]
 
-    initial_mask_rate, final_mask_rate = torch.tensor(0.50, device='cuda'), torch.tensor(0.15, device='cuda')
+    # Linearly increase the sliding window size and MLM prob
+
+    def lerp_put(frac_done, start_val, end_val, precision, storage):
+        val = ((1 - frac_done) * start_val + frac_done * end_val) // precision * precision
+        if val > storage:
+            val = val if torch.is_floating_point(storage) else int(val)
+            storage.copy_(val, non_blocking=True)
+
     mlm_probability = torch.tensor(0.50, device='cuda')
+    final_mlm_prob = torch.tensor(0.15, device='cuda')
     sliding_window_size = torch.tensor(1024 - 128, dtype=torch.int32, device='cuda')
-    sw_prev = 1024 - 128
+    update_mlm_probability = partial(lerp_put, start_val=0.5, end_val=0.12, precision=0.01)
+    update_sw_size = partial(lerp_put, start_val=1024, end_val=args.max_length, precision=128)
+
     # Start training loop
     training_time_ms = 0
     # start the clock
@@ -202,13 +203,9 @@ def train(args, model_config):
             t0 = time.perf_counter()
         timed_steps = float('nan') if step <= 11 else (step - 10) + 1 # <= 11 to avoid bug in val
 
-        # Linearly increase the sliding window size over training in chunks of 128 from 512 -> max_length. By @fernbear.bsky.social
-        frac_done = step / args.num_steps # training progress
-        sw_size = int(((1 - frac_done) * 512 + frac_done * args.max_length) // 128) * 128
-        if sw_size != sw_prev:
-            sliding_window_size.copy_(sw_size, non_blocking=True)
-            sw_prev = sw_size
-        mlm_probability.copy_(initial_mask_rate + (final_mask_rate - initial_mask_rate) * frac_done, non_blocking=True)
+        frac_done = step / args.num_steps  # training progress
+        update_mlm_probability(frac_done, storage=mlm_probability)
+        update_sw_size(frac_done, storage=sliding_window_size)
 
         # once in a while evaluate the validation dataset
         if args.valid_loss_every > 0 and step % args.valid_loss_every == 0 or last_step:
@@ -224,11 +221,10 @@ def train(args, model_config):
                 while input_ids.numel():
                     batch_valid_tokens = (input_ids != pad_id).sum()
                     valid_tokens += batch_valid_tokens
-                    val_loss += model(input_ids, sliding_window_size, mlm_probability=final_mask_rate) * batch_valid_tokens
+                    val_loss += model(input_ids, sliding_window_size, final_mlm_prob) * batch_valid_tokens
                     input_ids = valid_loader.next_batch()
-            if ddp_world_size > 1:
-                dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
-                dist.all_reduce(valid_tokens, op=dist.ReduceOp.SUM)
+            dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
+            dist.all_reduce(valid_tokens, op=dist.ReduceOp.SUM)
             val_loss /= valid_tokens
             # log val loss to console and to logfile
             print0(f'step:{step}/{args.num_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/(timed_steps-1):.2f}ms perplexity:{(math.e**val_loss):.4f} param_count:{get_param_count(model):,} tokens: {valid_tokens.item():,}')
@@ -246,13 +242,11 @@ def train(args, model_config):
                 log = dict(step=step, code=code, model=raw_model.state_dict(), optimizers=[opt.state_dict() for opt in optimizers])
                 torch.save(log, 'logs/state_step%06d.pt' % step)
 
-                try:
-                    if ddp_world_size > 1:
+                if args.hf_model_name:
+                    try:
                         model.module.push_to_hub(args.hf_model_name, subfolder='step%06d' % step)
-                    else:
-                        model.push_to_hub(args.hf_model_name, subfolder='step%06d' % step)
-                except Exception as e:
-                    print(e)
+                    except Exception as e:
+                        print0(e)
 
                 torch.cuda.synchronize()
                 t0 = time.perf_counter()
@@ -312,7 +306,7 @@ def train(args, model_config):
         while input_ids.numel():
             batch_test_tokens = (input_ids != pad_id).sum()
             test_tokens += batch_test_tokens
-            test_loss += model(input_ids, sliding_window_size, mlm_probability=final_mask_rate) * batch_test_tokens
+            test_loss += model(input_ids, sliding_window_size, mlm_probability=final_mlm_prob) * batch_test_tokens
             input_ids = test_loader.next_batch()
     if ddp_world_size > 1:
         dist.all_reduce(test_loss, op=dist.ReduceOp.SUM)
@@ -329,7 +323,7 @@ def train(args, model_config):
         while input_ids.numel():
             batch_test_tokens = (input_ids != pad_id).sum()
             test_tokens += batch_test_tokens
-            logits, loss, labels = model.inference(input_ids, sliding_window_size, mlm_probability=final_mask_rate)
+            logits, loss, labels = model.inference(input_ids, sliding_window_size, mlm_probability=final_mlm_prob)
             test_loss += loss * batch_test_tokens
             all_logits.extend(logits.detach().cpu().flatten().tolist())
             all_labels.extend(labels.detach().cpu().flatten().tolist())
