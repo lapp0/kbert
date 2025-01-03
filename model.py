@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
-from transformers import PreTrainedModel
 from typing import Tuple, List
 from dataclasses import dataclass
 from transformers import AutoTokenizer
@@ -19,6 +18,19 @@ class ModelConfig:
     model_dim: int = 768
     intermediate_dim: float = 768 * 4
 
+    flex_kernel_consumer: bool = False
+
+    @property
+    def flex_kernel_options(self):
+        if self.flex_kernel_consumer:
+            # 3090/4090 settings used if flex_kernel_consumer == True
+            # https://github.com/pytorch/pytorch/issues/133254#issuecomment-2408710459
+            return {
+                "BLOCK_M": 64, "BLOCK_N": 64,  # forward
+                "BLOCK_M1": 32, "BLOCK_N1": 64, "BLOCK_M2": 64, "BLOCK_N2": 32  # backwards
+            }
+        else:
+            return None
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:
@@ -58,8 +70,9 @@ class Rotary(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, dim, num_attention_heads):
+    def __init__(self, dim, num_attention_heads, flex_kernel_options):
         super().__init__()
+        self.flex_kernel_options = flex_kernel_options
         assert dim % num_attention_heads == 0
         self.num_attention_heads = num_attention_heads
         self.qkv = CastedLinear(dim, 3 * dim)
@@ -79,7 +92,13 @@ class SelfAttention(nn.Module):
         v = self.lambdas[0] * v + self.lambdas[1] * vi.view_as(v)
         q, k = norm(q), norm(k)
         q, k = self.rotary(q), self.rotary(k)
-        y = flex_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), block_mask=block_mask, enable_gqa=True)
+        y = flex_attention(
+            q.transpose(1, 2),
+            k.transpose(1, 2),
+            v.transpose(1, 2),
+            block_mask=block_mask,
+            kernel_options=self.flex_kernel_options
+        )
         y = y.transpose(1, 2).contiguous().view_as(x)  # re-assemble all head outputs side by side
         y = self.o_proj(y)
         return y
@@ -102,8 +121,8 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.attn = SelfAttention(config.hidden_size, config.num_attention_heads)
-        self.mlp = MLP(config.hidden_size, config.intermediate_dim)
+        self.attn = SelfAttention(config.model_dim, config.num_attention_heads, config.flex_kernel_options)
+        self.mlp = MLP(config.model_dim, config.intermediate_dim)
         self.lambdas = nn.Parameter(torch.tensor([1., 0.]))
 
     def forward(self, x: torch.Tensor, vi: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
@@ -114,11 +133,11 @@ class Block(nn.Module):
 
 
 class ValueEmbedding(nn.Module):
-    def __init__(self, config: "ModelConfig", padding_idx):
+    def __init__(self, config: "ModelConfig", vocab_size, padding_idx):
         super().__init__()
         self.embed = nn.ModuleList([
-            nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=padding_idx)
-            for _ in range(config.num_hidden_layers // 2)
+            nn.Embedding(vocab_size, config.model_dim, padding_idx=padding_idx)
+            for _ in range(config.num_layers // 2)
         ])
 
     def forward(self, inputs: torch.Tensor) -> List[torch.Tensor]:
@@ -127,30 +146,29 @@ class ValueEmbedding(nn.Module):
         return ve
 
 
-class KBERT(PreTrainedModel):
-    config_class = ModelConfig
+class KBERT(nn.Module):
     def __init__(self, config: ModelConfig):
-        super().__init__(config)
+        super().__init__()
         self.config = config
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
         self.masker = MLMMasker(tokenizer)
         self.cls_id = tokenizer.cls_token_id
         self.vocab_size = (tokenizer.vocab_size // 256 + 1) * 256  # round up to nearest 256
-        self.num_hidden_layers = config.num_hidden_layers
+        self.num_layers = config.num_layers
 
         # U-net design by @brendanh0gan
-        assert config.num_hidden_layers % 2 == 0, "Number of layers should be even for U-net design"
-        self.num_encoder_layers = config.num_hidden_layers // 2 # Half of the layers for encoder
-        self.num_decoder_layers = config.num_hidden_layers - self.num_encoder_layers # Remaining for decoder
+        assert config.num_layers % 2 == 0, "Number of layers should be even for U-net design"
+        self.num_encoder_layers = config.num_layers // 2 # Half of the layers for encoder
+        self.num_decoder_layers = config.num_layers - self.num_encoder_layers # Remaining for decoder
         # Add learnable skip connection weights for decoder layers
         self.skip_weights = nn.Parameter(torch.ones(self.num_decoder_layers))
 
-        self.embed = nn.Embedding(self.vocab_size, config.hidden_size, padding_idx=tokenizer.pad_token_id)
-        self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_hidden_layers)])
+        self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
+        self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
         # token value embeddings by @KoszarskyB - inspired by @Grad62304977's value residual learning
         # U-net structure on token value embeddings by @leloykun
-        self.value_embeds = ValueEmbedding(config, padding_idx=tokenizer.pad_token_id)
-        self.lm_head = CastedLinear(config.hidden_size, self.vocab_size)
+        self.value_embeds = ValueEmbedding(config, vocab_size=self.vocab_size, padding_idx=tokenizer.pad_token_id)
+        self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
         self.lm_head.weight.data.zero_() # @Grad62304977
         self.cross_entropy = nn.CrossEntropyLoss()
 

@@ -1,6 +1,9 @@
 import os
 import sys
 
+from dataclasses import dataclass, fields, MISSING
+from typing import get_origin, get_args, Union, Optional
+
 import argparse
 import uuid
 import time
@@ -21,38 +24,26 @@ from dataloading import DistributedPaddedDataLoader
 code = open(sys.argv[0]).read()
 code += open('optimizer.py', 'r', encoding='utf-8').read()
 code += open('model.py', 'r', encoding='utf-8').read()
-code += open('utils.py', 'r', encoding='utf-8').read()
 code += open('dataloading.py', 'r', encoding='utf-8').read()
 
 
-def get_args():
-    parser = argparse.ArgumentParser(description='KBERT training arguments')
-
-    # Model hyperparams
-    parser.add_argument('--num_hidden_layers', type=int, default=12, help='number of transformer layers')
-    parser.add_argument('--num_attention_heads', type=int, default=6, help='number of attention heads (head dim 128 suggested by @Grad62304977)')
-    parser.add_argument('--hidden_size', type=int, default=768, help='model hidden dimension size')
-
+@dataclass
+class TrainingArguments:
     # Data hyperparams
-    parser.add_argument('--input_bin', type=str, default='data/fineweb-edu/fwedu_train_*.bin', help='input .bins to train on')
-    parser.add_argument('--input_valid_bin', type=str, default='data/fineweb-edu/fwedu_valid_*.bin', help='input .bins to eval validation loss on')
-    parser.add_argument('--input_test_bin', type=str, default='data/fineweb-edu/fwedu_test_*.bin', help='input .bins to eval test loss on')
-
+    input_bin: str = "data/fineweb-edu/fwedu_train_*.bin"
+    input_valid_bin: str = "data/fineweb-edu/fwedu_valid_*.bin"
+    input_test_bin: str = "data/fineweb-edu/fwedu_test_*.bin"
     # Optimization hyperparams
-    parser.add_argument('--batch_size', type=int, default=8*64*1024, help='batch size, in tokens, across all devices')
-    parser.add_argument('--grad_accum', type=int, default=1, help='manually set number of gradient accumulation steps, else, will be ddp_world_size')
-    parser.add_argument('--num_steps', type=int, default=20000, help='number of iterations to run')
-    parser.add_argument('--warmup_steps', type=int, default=100, help='number of warmup steps')
-    parser.add_argument('--cooldown_steps', type=int, default=2000, help='number of cooldown steps')
-    parser.add_argument('--max_length', type=int, default=2**16, help='maximum sequence length')
-
+    batch_size: int = 8*64*1024
+    grad_accum: int = 1
+    num_steps: int = 20000
+    warmup_steps: int = 200
+    cooldown_steps: int = 2000
+    max_length: int = 2**16
     # Evaluation and logging hyperparams
-    parser.add_argument('--valid_loss_every', type=int, default=250, help='every how many steps to evaluate val loss? 0 for only at the end')
-    parser.add_argument('--hf_model_name', type=str, default='lapp0/kbert_speedrun', help='huggingface model name')
-    parser.add_argument('--token', type=str, default=None, help='huggingface token')
-    parser.add_argument('--save_every', type=int, default=None, help='save every how many steps? None for no saving')
-    args = parser.parse_args()
-    return args
+    valid_loss_every: int = 250
+    hf_model_name: Optional[str] = "lapp0/kbert_speedrun"
+    save_every: Optional[int] = None
 
 
 def get_param_count(model):
@@ -62,19 +53,7 @@ def get_param_count(model):
     return total_params
 
 
-if __name__ == '__main__':
-    args = get_args()
-    if args.token:
-        from huggingface_hub import login
-        login(args.token)
-        args.token = None
-    model_config = ModelConfig(
-        vocab_size=args.vocab_size,
-        num_hidden_layers=args.num_hidden_layers,
-        num_attention_heads=args.num_attention_heads,
-        hidden_size=args.hidden_size,
-    )
-
+def train(args, model_config):
     # set up DDP (distributed data parallel) if available, otherwise single GPU
     if 'RANK' in os.environ:
         ddp_rank = int(os.environ['RANK'])
@@ -149,7 +128,7 @@ if __name__ == '__main__':
 
     # load tokens
     tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base")
-    eos_id, pad_id = tokenizer.eos_token_id, tokenizer.pad_token_id
+    eos_id, pad_id = tokenizer.sep_token_id, tokenizer.pad_token_id
     train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
     valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
     test_loader = DistributedPaddedDataLoader(args.input_test_bin, batch_size // 8, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
@@ -386,3 +365,50 @@ if __name__ == '__main__':
     # clean up nice
     if ddp_world_size > 1:
         dist.destroy_process_group()
+
+
+default_dataclass_map = {"train": TrainingArguments, "model": ModelConfig}
+def parse_args(dataclass_map=None):
+    parser = argparse.ArgumentParser()
+    dataclass_map = dataclass_map or default_dataclass_map
+
+    def resolve_type(field):
+        origin = get_origin(field.type)
+        if origin is Union:
+            args = get_args(field.type)
+            non_none_types = [arg for arg in args if arg is not type(None)]  # Exclude NoneType
+            if len(non_none_types) == 1:
+                return non_none_types[0]
+        return field.type
+
+    # Dynamically add arguments for each dataclass
+    for prefix, dataclass_type in dataclass_map.items():
+        for field in fields(dataclass_type):
+            arg_name = f"--{prefix}.{field.name}"
+            arg_type = resolve_type(field)
+            if field.default != MISSING:
+                default = field.default
+            elif field.default_factory != MISSING:  # Handle default_factory
+                default = field.default_factory()
+            else:
+                default = None
+            parser.add_argument(
+                arg_name,
+                type=arg_type,
+                default=default,
+                help=f"{field.name} for {prefix} (type: {arg_type.__name__})"
+            )
+    args = parser.parse_args()
+    result = {}
+    for prefix, dataclass_type in dataclass_map.items():
+        kwargs = {
+            field.name: getattr(args, f"{prefix}.{field.name}")
+            for field in fields(dataclass_type)
+        }
+        result[prefix] = dataclass_type(**kwargs)
+    return result
+
+
+if __name__ == "__main__":
+    cl_args = parse_args()
+    train(args=cl_args["train"], model_config=cl_args["model"])

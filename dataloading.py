@@ -12,8 +12,8 @@ def _load_data_shard(file: Path):
     with file.open('rb', buffering=0) as f:
         tokens = torch.empty(num_tokens, dtype=torch.uint16, pin_memory=True)
         f.seek(256 * 4)
-        nbytes = 2 * f.readinto(tokens.numpy())
-        assert nbytes == num_tokens, 'number of tokens read does not match header?'
+        nbytes = f.readinto(tokens.numpy())
+        assert nbytes == 2 * num_tokens, 'number of tokens read does not match header?'
     return tokens
 
 
@@ -74,7 +74,6 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
 
         processed_chunks = []
         curr_batch_len = 0
-
         eos_positions = (raw_tokens == self.eos_id).nonzero(as_tuple=True)[0]
 
         for i in range(len(eos_positions)):
@@ -82,8 +81,8 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             prev_eos_plus_one = 0 if i == 0 else eos_positions[i-1] + 1  # EOS_idx + 1 = CLS_idx
             sample = raw_tokens[prev_eos_plus_one:curr_eos+1]  # One sample: "CLS ... EOS"
 
-            assert sample[0] == 0 and sample[-1] == 2, (sample[0], sample[-1])
-            assert curr_batch_len < self.local_batch_size, curr_batch_len
+            assert sample[0] == 50281 and sample[-1] == 50282, (sample[0], sample[-1])
+            assert curr_batch_len < self.local_batch_size, str((curr_batch_len, self.local_batch_size))
 
             # if adding sample exceeds the batch size resulting in truncation, pad to end of batch, starting a fresh batch
             if len(sample) + curr_batch_len >= self.local_batch_size:
