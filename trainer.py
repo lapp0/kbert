@@ -174,21 +174,24 @@ def train(args, model_config):
 
     # Linearly increase the sliding window size and MLM prob
 
-    def lerp_put(frac_done, start_val, end_val, precision, storage):
-        val = ((1 - frac_done) * start_val + frac_done * end_val) // precision * precision
-        if val != storage:
-            val = val if torch.is_floating_point(storage) else int(val)
-            storage.copy_(val, non_blocking=True)
+    class LerpTensor:
+        def __init__(self, start_val, end_val, precision):
+            self.start, self.end, self.prec = start_val, end_val, precision
+            self.prev_val = None
+            dtype = torch.int32 if isinstance(precision, int) else torch.float
+            self.gpu_val = torch.tensor(0, dtype=dtype, device="cuda")
+
+        def __call__(self, frac_done):
+            val = ((1 - frac_done) * self.start + frac_done * self.end) // self.prec * self.prec
+            if val != self.prev_val:
+                self.prev_val = val
+                self.gpu_val.copy_(val, non_blocking=True)
+            return self.gpu_val
 
     final_mlm_prob = torch.tensor(0.15, device='cuda')
 
-    mlm_probability = torch.tensor(-1.0, device='cuda')
-    sliding_window_size = torch.tensor(-1, dtype=torch.int32, device='cuda')
-    update_mlm_probability = partial(lerp_put, start_val=0.5, end_val=0.12, precision=0.01)
-    update_sw_size = partial(lerp_put, start_val=1024, end_val=args.max_length, precision=128)
-
-    update_mlm_probability(0.0, storage=mlm_probability)
-    update_sw_size(0.0, storage=sliding_window_size)
+    lerp_mlm_prob = LerpTensor(start_val=0.5, end_val=0.12, precision=0.01)
+    lerp_sw_size = LerpTensor(start_val=1024, end_val=args.max_length, precision=128)
 
 
     # Start training loop
@@ -211,8 +214,8 @@ def train(args, model_config):
         timed_steps = float('nan') if step <= 11 else (step - 10) + 1 # <= 11 to avoid bug in val
 
         frac_done = step / args.num_steps  # training progress
-        update_mlm_probability(frac_done, storage=mlm_probability)
-        update_sw_size(frac_done, storage=sliding_window_size)
+        mlm_probability = lerp_mlm_prob(frac_done)
+        sliding_window_size = lerp_sw_size(frac_done)
 
         # once in a while evaluate the validation dataset
         if args.valid_loss_every > 0 and step % args.valid_loss_every == 0 or last_step:
