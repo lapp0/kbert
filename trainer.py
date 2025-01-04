@@ -54,15 +54,18 @@ def get_param_count(model):
     return total_params
 
 
+# setup dist
+ddp_rank = int(os.environ['RANK'])
+ddp_local_rank = int(os.environ['LOCAL_RANK'])
+ddp_world_size = int(os.environ['WORLD_SIZE'])
+device = torch.device(f'cuda:{ddp_local_rank}')
+torch.cuda.set_device(device)
+dist.init_process_group(backend='nccl', device_id=device)
+dist.barrier()
+master_process = (ddp_rank == 0)
+
+
 def train(args, model_config):
-    ddp_rank = int(os.environ['RANK'])
-    ddp_local_rank = int(os.environ['LOCAL_RANK'])
-    ddp_world_size = int(os.environ['WORLD_SIZE'])
-    device = torch.device(f'cuda:{ddp_local_rank}')
-    torch.cuda.set_device(device)
-    dist.init_process_group(backend='nccl', device_id=device)
-    dist.barrier()
-    master_process = (ddp_rank == 0)
     print(f'using device: {device}')
 
     # begin logging
@@ -296,61 +299,6 @@ def train(args, model_config):
     except Exception as e:
         print(e)
 
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
-    torch.manual_seed(42)
-    model.eval()
-    test_loader.reset()
-
-    test_loss, test_tokens = 0.0, 0
-    with torch.no_grad():
-        input_ids = test_loader.next_batch()
-        while input_ids.numel():
-            batch_test_tokens = (input_ids != pad_id).sum()
-            test_tokens += batch_test_tokens
-            test_loss += model(input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob) * batch_test_tokens
-            input_ids = test_loader.next_batch()
-    dist.all_reduce(test_loss, op=dist.ReduceOp.SUM)
-    dist.all_reduce(test_tokens, op=dist.ReduceOp.SUM)
-    test_loss /= test_tokens
-
-    original_test_loss = test_loss
-    print0(f"Original test loss (regular forward pass): {original_test_loss:.4f}")
-
-    test_loss, test_tokens = 0.0, 0
-    all_logits, all_labels = [], []
-    with torch.no_grad():
-        input_ids = test_loader.next_batch()
-        while input_ids.numel():
-            batch_test_tokens = (input_ids != pad_id).sum()
-            test_tokens += batch_test_tokens
-            logits, loss, labels = model.inference(input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob)
-            test_loss += loss * batch_test_tokens
-            all_logits.extend(logits.detach().cpu().flatten().tolist())
-            all_labels.extend(labels.detach().cpu().flatten().tolist())
-            input_ids = test_loader.next_batch()
-            dist.all_reduce(test_loss, op=dist.ReduceOp.SUM)
-            dist.all_reduce(test_tokens, op=dist.ReduceOp.SUM)
-    test_loss /= test_tokens
-
-    import numpy as np
-    from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, matthews_corrcoef
-    all_labels = np.array(all_labels)
-    all_logits = np.array(all_logits)
-    mask = (all_labels != -100)
-    all_labels = all_labels[mask]
-    all_logits = all_logits[mask]
-
-    test_precision = precision_score(all_labels, all_logits, average='weighted')
-    test_recall = recall_score(all_labels, all_logits, average='weighted')
-    test_f1 = f1_score(all_labels, all_logits, average='weighted')
-    test_accuracy = accuracy_score(all_labels, all_logits)
-    test_mcc = matthews_corrcoef(all_labels, all_logits)
-
-    print0(f"Test results (inference pass): {test_tokens.item()}")
-    print0(f'Test tokens: {test_tokens.item()}')
-    print0(f'Loss: {test_loss:.4f} | Perplexity: {math.e**test_loss:.4f}')
-    print0(f'Precision: {test_precision:.4f} | Recall: {test_recall:.4f} | F1: {test_f1:.4f} | Accuracy: {test_accuracy:.4f} | MCC: {test_mcc:.4f}')
     print0(f'Train Time: {training_time_ms:.0f}ms | Step Avg: {training_time_ms/(timed_steps-1):.2f}ms | Param Count: {get_param_count(model):,}')
     print0(f'Total train time (min): {training_time_ms / 60000:.2f}')
     print0(f'Total train time (hours): {training_time_ms / 3600000:.2f}')
