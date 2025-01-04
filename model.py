@@ -66,7 +66,7 @@ class SelfAttention(nn.Module):
         self.o_proj = CastedLinear(dim, dim)
         self.o_proj.weight.data.zero_()
 
-    def forward(self, x: torch.Tensor, vi: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, v1: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         B, T = x.size(0), x.size(1)  # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
         qkv = self.qkv(x)
@@ -74,13 +74,15 @@ class SelfAttention(nn.Module):
         q = q.view(B, T, self.num_attention_heads, -1)
         k = k.view(B, T, self.num_attention_heads, -1)
         v = v.view(B, T, self.num_attention_heads, -1)
-        v = self.lambdas[0] * v + self.lambdas[1] * vi.view_as(v)
+        if v1 is None:
+            v1 = v
+        v = self.lambdas[0] * v + self.lambdas[1] * v1.view_as(v)
         q, k = norm(q), norm(k)
         q, k = self.rotary(q), self.rotary(k)
         y = flex_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), block_mask=block_mask)
         y = y.transpose(1, 2).contiguous().view_as(x)  # re-assemble all head outputs side by side
         y = self.o_proj(y)
-        return y
+        return y, v1
 
 
 class MLP(nn.Module):
@@ -104,25 +106,12 @@ class Block(nn.Module):
         self.mlp = MLP(config.model_dim, config.intermediate_dim)
         self.lambdas = nn.Parameter(torch.tensor([1., 0.]))
 
-    def forward(self, x: torch.Tensor, vi: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, v1: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         x = self.lambdas[0] * x + self.lambdas[1] * x0
-        x = x + self.attn(norm(x), vi, block_mask)
+        x_out, v1 = self.attn(norm(x), v1, block_mask)
+        x += x_out
         x = x + self.mlp(norm(x))
-        return x
-
-
-class ValueEmbedding(nn.Module):
-    def __init__(self, config: "ModelConfig", vocab_size, padding_idx):
-        super().__init__()
-        self.embed = nn.ModuleList([
-            nn.Embedding(vocab_size, config.model_dim, padding_idx=padding_idx)
-            for _ in range(config.num_layers // 2)
-        ])
-
-    def forward(self, inputs: torch.Tensor) -> List[torch.Tensor]:
-        ve = [emb(inputs) for emb in self.embed]
-        ve += reversed(ve)
-        return ve
+        return x, v1
 
 
 class KBERT(nn.Module):
@@ -144,9 +133,7 @@ class KBERT(nn.Module):
 
         self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
-        # token value embeddings by @KoszarskyB - inspired by @Grad62304977's value residual learning
         # U-net structure on token value embeddings by @leloykun
-        self.value_embeds = ValueEmbedding(config, vocab_size=self.vocab_size, padding_idx=tokenizer.pad_token_id)
         self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
         self.lm_head.weight.data.zero_() # @Grad62304977
         self.cross_entropy = nn.CrossEntropyLoss()
@@ -173,17 +160,16 @@ class KBERT(nn.Module):
         x = self.embed(input_ids[None])
         x = norm(x) # @Grad62304977
         x0 = x
-        ve = self.value_embeds(input_ids)
+        v1 = None  # first layer value residual
 
-        ve_enc, ve_dec = ve[:self.num_encoder_layers], ve[self.num_encoder_layers:]
         skip_connections = []
         for i in range(self.num_encoder_layers):
-            x = self.blocks[i](x, ve_enc[i], x0, block_mask)
+            x, v1 = self.blocks[i](x, v1, x0, block_mask)
             skip_connections.append(x)
 
         for i in range(self.num_decoder_layers):
             x = x + self.skip_weights[i] * skip_connections.pop()
-            x = self.blocks[self.num_encoder_layers + i](x, ve_dec[i], x0, block_mask)
+            x, _ = self.blocks[self.num_encoder_layers + i](x, v1, x0, block_mask)
 
         return x
 
