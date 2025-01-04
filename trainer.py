@@ -8,7 +8,6 @@ import argparse
 import uuid
 import time
 import contextlib
-from functools import partial
 import math
 import torch
 import torch.distributed as dist
@@ -33,7 +32,6 @@ class TrainingArguments:
     # Data hyperparams
     input_bin: str = "data/fineweb-edu/fwedu_train_*.bin"
     input_valid_bin: str = "data/fineweb-edu/fwedu_valid_*.bin"
-    input_test_bin: str = "data/fineweb-edu/fwedu_test_*.bin"
     # Optimization hyperparams
     batch_size: int = 8*64*1024
     grad_accum: int = 1
@@ -125,10 +123,8 @@ def train(args, model_config):
     eos_id, pad_id = tokenizer.sep_token_id, tokenizer.pad_token_id
     train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
     valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
-    test_loader = DistributedPaddedDataLoader(args.input_test_bin, batch_size // 8, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
     print0(f'Training DataLoader: {len(train_loader.files)} files')
     print0(f'Validation DataLoader: {len(valid_loader.files)} files')
-    print0(f'Testing DataLoader: {len(test_loader.files)} files')
     print0('='*100, logonly=True)
 
     train_input_ids = train_loader.next_batch()
@@ -292,6 +288,9 @@ def train(args, model_config):
             print0(f'step:{step+1}/{args.num_steps} train_time:{approx_time:.0f}ms step_avg:{approx_time/timed_steps:.2f}ms')
 
     print0(f'peak memory consumption training: {torch.cuda.max_memory_allocated() // 1024 // 1024 // 1024} GiB')
+    print0(f'Train Time: {training_time_ms:.0f}ms | Step Avg: {training_time_ms/(timed_steps-1):.2f}ms | Param Count: {get_param_count(model):,}')
+    print0(f'Total train time (min): {training_time_ms / 60000:.2f}')
+    print0(f'Total train time (hours): {training_time_ms / 3600000:.2f}')
 
     # save the model to huggingface
     try:
@@ -299,10 +298,6 @@ def train(args, model_config):
     except Exception as e:
         print(e)
 
-    print0(f'Train Time: {training_time_ms:.0f}ms | Step Avg: {training_time_ms/(timed_steps-1):.2f}ms | Param Count: {get_param_count(model):,}')
-    print0(f'Total train time (min): {training_time_ms / 60000:.2f}')
-    print0(f'Total train time (hours): {training_time_ms / 3600000:.2f}')
-    print0(f"peak memory consumption testing: {torch.cuda.max_memory_allocated() // 1024 // 1024 // 1024} GiB")
     # -------------------------------------------------------------------------
     # clean up nice
     dist.destroy_process_group()
