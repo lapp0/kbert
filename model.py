@@ -16,7 +16,7 @@ class ModelConfig:
     num_layers: int = 12
     num_attention_heads: int = 6
     model_dim: int = 768
-    intermediate_dim: float = 768 * 4
+    intermediate_dim: int = 768 * 4
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:

@@ -139,11 +139,8 @@ def train(args, model_config):
     model = torch.compile(model)
 
     # wrap model in DDP only if using distributed training
-    if ddp_world_size > 1:
-        model = DDP(model, device_ids=[ddp_local_rank], broadcast_buffers=False, gradient_as_bucket_view=True)
-        raw_model = model.module
-    else:
-        raw_model = model
+    model = DDP(model, device_ids=[ddp_local_rank], broadcast_buffers=False, gradient_as_bucket_view=True)
+    raw_model = model.module
 
     # init the optimizers
     embed_params = [*raw_model.embed.parameters(), *raw_model.value_embeds.parameters()]
@@ -300,10 +297,7 @@ def train(args, model_config):
 
     # save the model to huggingface
     try:
-        if ddp_world_size > 1:
-            model.module.push_to_hub(args.hf_model_name)
-        else:
-            model.push_to_hub(args.hf_model_name)
+        model.module.push_to_hub(args.hf_model_name)
     except Exception as e:
         print(e)
 
@@ -321,9 +315,8 @@ def train(args, model_config):
             test_tokens += batch_test_tokens
             test_loss += model(input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob) * batch_test_tokens
             input_ids = test_loader.next_batch()
-    if ddp_world_size > 1:
-        dist.all_reduce(test_loss, op=dist.ReduceOp.SUM)
-        dist.all_reduce(test_tokens, op=dist.ReduceOp.SUM)
+    dist.all_reduce(test_loss, op=dist.ReduceOp.SUM)
+    dist.all_reduce(test_tokens, op=dist.ReduceOp.SUM)
     test_loss /= test_tokens
 
     original_test_loss = test_loss
@@ -341,9 +334,8 @@ def train(args, model_config):
             all_logits.extend(logits.detach().cpu().flatten().tolist())
             all_labels.extend(labels.detach().cpu().flatten().tolist())
             input_ids = test_loader.next_batch()
-            if ddp_world_size > 1:
-                dist.all_reduce(test_loss, op=dist.ReduceOp.SUM)
-                dist.all_reduce(test_tokens, op=dist.ReduceOp.SUM)
+            dist.all_reduce(test_loss, op=dist.ReduceOp.SUM)
+            dist.all_reduce(test_tokens, op=dist.ReduceOp.SUM)
     test_loss /= test_tokens
 
     import numpy as np
@@ -370,8 +362,7 @@ def train(args, model_config):
     print0(f"peak memory consumption testing: {torch.cuda.max_memory_allocated() // 1024 // 1024 // 1024} GiB")
     # -------------------------------------------------------------------------
     # clean up nice
-    if ddp_world_size > 1:
-        dist.destroy_process_group()
+    dist.destroy_process_group()
 
 
 default_dataclass_map = {"train": TrainingArguments, "model": ModelConfig}
