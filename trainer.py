@@ -303,10 +303,9 @@ def train(args, model_config):
     dist.destroy_process_group()
 
 
-default_dataclass_map = {"train": TrainingArguments, "model": ModelConfig}
 def parse_args(dataclass_map=None):
     parser = argparse.ArgumentParser()
-    dataclass_map = dataclass_map or default_dataclass_map
+    dataclass_map = dataclass_map or {"train": TrainingArguments, "model": ModelConfig}
 
     def resolve_type(field):
         origin = get_origin(field.type)
