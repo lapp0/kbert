@@ -170,9 +170,9 @@ class KBERT(nn.Module):
             self,
             input_ids: torch.Tensor,
             sliding_window_size: torch.Tensor,
-            mlm_probability: torch.Tensor,
+            mask_prob: torch.Tensor,
             keep_replace_prob: torch.Tensor) -> torch.Tensor:
-        input_ids, labels = self.masker(input_ids, mlm_probability, keep_replace_prob)
+        input_ids, labels = self.masker(input_ids, mask_prob, keep_replace_prob)
         last_hs = self.encoder_pass(input_ids, sliding_window_size)
         logits = self.get_logits(last_hs)
         return self.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())

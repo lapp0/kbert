@@ -229,7 +229,7 @@ def train(args, model_config):
         timed_steps = float('nan') if step <= 11 else (step - 10) + 1 # <= 11 to avoid bug in val
 
         frac_done = step / args.num_steps  # training progress
-        mlm_prob = lerp_mask_prob(frac_done)
+        mask_prob = lerp_mask_prob(frac_done)
         keep_replace_prob = lerp_keep_replace_prob(frac_done)
         sliding_window_size = lerp_sw_size(frac_done)
 
@@ -288,7 +288,7 @@ def train(args, model_config):
                     stack.enter_context(model.no_sync())
                 if step >= 5:
                     stack.enter_context(torch.compiler.set_stance(skip_guard_eval_unsafe=True))
-                model(train_input_ids, sliding_window_size, mlm_prob, keep_replace_prob).backward()
+                model(train_input_ids, sliding_window_size, mask_prob, keep_replace_prob).backward()
                 train_input_ids = train_loader.next_batch()
         if train_accumulation_steps != 1:
             for p in model.parameters():
