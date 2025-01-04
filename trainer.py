@@ -202,15 +202,15 @@ def train(args, model_config):
         def __call__(self, frac_done):
             val = ((1 - frac_done) * self.start + frac_done * self.end) // self.prec * self.prec
             if val != self.prev_val:
-                self.prev_val = val
                 self.gpu_val.copy_(val, non_blocking=True)
+                self.prev_val = val
             return self.gpu_val
 
     final_mask_prob = torch.tensor(0.12, device='cuda')
     final_keep_replace_prob = torch.tensor(0.015, device='cuda')
 
     lerp_mask_prob = LerpTensor(start_val=0.2, end_val=0.12, precision=0.01)
-    lerp_keep_replace_prob = LerpTensor(start_val=0.075, end_val=0.015, precision=0.015)
+    lerp_keep_replace_prob = LerpTensor(start_val=0.075, end_val=0.015, precision=0.005)
     lerp_sw_size = LerpTensor(start_val=1024, end_val=args.max_length, precision=128)
 
 
