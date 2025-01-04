@@ -1,4 +1,8 @@
-KBERT (Keller Bert) is an open-source collaboration to produce the pareto frontier of BERT models, based on [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) and [SpeedRunningESM2](https://github.com/Synthyra/SpeedRunningESM2).
+KBERT (Keller BERT, based on Keller Jordans modded-nanogpt) is an open-source project seeking to produce the pareto frontier of BERT models. The objective is to produce a BERT variant which surpasses ModernBERT's GLUE score in as few FLOPs as possible.
+
+Based on
+- [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt)
+- [SpeedRunningESM2](https://github.com/Synthyra/SpeedRunningESM2)
 
 ## Quick Start
 
