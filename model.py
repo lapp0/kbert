@@ -50,7 +50,9 @@ class SelfAttention(nn.Module):
         super().__init__()
         assert dim % num_attention_heads == 0
         self.num_attention_heads = num_attention_heads
-        self.qkv = CastedLinear(dim, 3 * dim)
+        self.c_q = CastedLinear(dim, dim)
+        self.c_k = CastedLinear(dim, dim)
+        self.c_v = CastedLinear(dim, dim)
         self.lambdas = nn.Parameter(torch.tensor([0.5, 0.5]))
         self.rotary = Rotary(dim // num_attention_heads)
         self.o_proj = CastedLinear(dim, dim)
@@ -59,8 +61,9 @@ class SelfAttention(nn.Module):
     def forward(self, x: torch.Tensor, v1: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         B, T = x.size(0), x.size(1)  # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
-        qkv = self.qkv(x)
-        q, k, v = qkv.chunk(3, dim=-1)
+        q = self.c_q(x).view(B, T, self.num_heads, -1)
+        k = self.c_k(x).view(B, T, self.num_heads, -1)
+        v = self.c_v(x).view(B, T, self.num_heads, -1)
         q = q.view(B, T, self.num_attention_heads, -1)
         k = k.view(B, T, self.num_attention_heads, -1)
         v = v.view(B, T, self.num_attention_heads, -1)
