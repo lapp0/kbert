@@ -191,8 +191,9 @@ class KBERT(nn.Module):
             self,
             input_ids: torch.Tensor,
             sliding_window_size: torch.Tensor,
-            mlm_probability: torch.Tensor) -> torch.Tensor:
-        input_ids, labels = self.masker(input_ids, mlm_probability)
+            mlm_probability: torch.Tensor,
+            keep_replace_prob: torch.Tensor) -> torch.Tensor:
+        input_ids, labels = self.masker(input_ids, mlm_probability, keep_replace_prob)
         last_hs = self.encoder_pass(input_ids, sliding_window_size)
         logits = self.get_logits(last_hs)
         return self.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
@@ -209,25 +210,30 @@ class MLMMasker(nn.Module):
         self.register_buffer("standard_tokens", torch.tensor(standard_tokens, dtype=torch.int32))
         self.register_buffer("special_tokens", torch.tensor(tokenizer.all_special_ids, dtype=torch.int32))
 
-    def __call__(self, input_ids: torch.Tensor, mlm_probability: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __call__(
+            self, input_ids: torch.Tensor, mask_prob: torch.Tensor, keep_replace_prob: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         labels = input_ids.clone()
 
         # Create special tokens mask using broadcasting
         special_tokens_mask = (input_ids[..., None] == self.special_tokens).any(-1)
 
+        mlm_prob = mask_prob + keep_replace_prob * 2
+        mask_portion = mask_prob / mlm_prob
+
         # Create probability matrix and mask special tokens
-        probability_matrix = torch.ones_like(labels, dtype=torch.float) * mlm_probability
+        probability_matrix = torch.ones_like(labels, dtype=torch.float) * mlm_prob
         probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
 
         # Create masked indices
         masked_indices = torch.bernoulli(probability_matrix).bool()
         labels[~masked_indices] = -100  # We only compute loss on masked tokens
 
-        # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-        indices_replaced = torch.bernoulli(torch.full_like(probability_matrix, 0.8)).bool() & masked_indices
+        # mask_prob% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
+        indices_replaced = torch.bernoulli(torch.full_like(probability_matrix, mask_portion)).bool() & masked_indices
         input_ids[indices_replaced] = self.mask_token_id
 
-        # 10% of the time, we replace masked input tokens with random word
+        # keep_replace_prob% of the time, we replace masked input tokens with random word
         replacement_idxs = torch.bernoulli(
             torch.full_like(probability_matrix, 0.5)
         ).bool() & masked_indices & ~indices_replaced
@@ -237,5 +243,5 @@ class MLMMasker(nn.Module):
         )
         input_ids[replacement_idxs] = self.standard_tokens[random_token_idxs]
 
-        # The rest of the time (10% of the time) we keep the masked input tokens unchanged
+        # The rest of the time (keep_replace_prob% of the time again) we keep the masked input tokens unchanged
         return input_ids, labels

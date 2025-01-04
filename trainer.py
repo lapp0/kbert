@@ -188,9 +188,11 @@ def train(args, model_config):
                 self.gpu_val.copy_(val, non_blocking=True)
             return self.gpu_val
 
-    final_mlm_prob = torch.tensor(0.15, device='cuda')
+    final_mask_prob = torch.tensor(0.12, device='cuda')
+    final_keep_replace_prob = torch.tensor(0.015, device='cuda')
 
-    lerp_mlm_prob = LerpTensor(start_val=0.5, end_val=0.12, precision=0.01)
+    lerp_mask_prob = LerpTensor(start_val=0.24, end_val=0.12, precision=0.01)
+    lerp_keep_replace_prob = LerpTensor(start_val=0.24, end_val=0.015, precision=0.015)
     lerp_sw_size = LerpTensor(start_val=1024, end_val=args.max_length, precision=128)
 
 
@@ -214,7 +216,8 @@ def train(args, model_config):
         timed_steps = float('nan') if step <= 11 else (step - 10) + 1 # <= 11 to avoid bug in val
 
         frac_done = step / args.num_steps  # training progress
-        mlm_probability = lerp_mlm_prob(frac_done)
+        mlm_prob = lerp_mask_prob(frac_done)
+        keep_replace_prob = lerp_keep_replace_prob(frac_done)
         sliding_window_size = lerp_sw_size(frac_done)
 
         # once in a while evaluate the validation dataset
@@ -231,7 +234,7 @@ def train(args, model_config):
                 while input_ids.numel():
                     batch_valid_tokens = (input_ids != pad_id).sum()
                     valid_tokens += batch_valid_tokens
-                    val_loss += model(input_ids, sliding_window_size, final_mlm_prob) * batch_valid_tokens
+                    val_loss += model(input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob) * batch_valid_tokens
                     input_ids = valid_loader.next_batch()
             dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
             dist.all_reduce(valid_tokens, op=dist.ReduceOp.SUM)
@@ -272,7 +275,7 @@ def train(args, model_config):
                     stack.enter_context(model.no_sync())
                 #if step >= 5:
                 #    stack.enter_context(torch.compiler.set_stance(skip_guard_eval_unsafe=True))
-                model(train_input_ids, sliding_window_size, mlm_probability=mlm_probability).backward()
+                model(train_input_ids, sliding_window_size, mlm_prob, keep_replace_prob).backward()
                 train_input_ids = train_loader.next_batch()
         if train_accumulation_steps != 1:
             for p in model.parameters():
@@ -316,7 +319,7 @@ def train(args, model_config):
         while input_ids.numel():
             batch_test_tokens = (input_ids != pad_id).sum()
             test_tokens += batch_test_tokens
-            test_loss += model(input_ids, sliding_window_size, mlm_probability=final_mlm_prob) * batch_test_tokens
+            test_loss += model(input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob) * batch_test_tokens
             input_ids = test_loader.next_batch()
     if ddp_world_size > 1:
         dist.all_reduce(test_loss, op=dist.ReduceOp.SUM)
@@ -333,7 +336,7 @@ def train(args, model_config):
         while input_ids.numel():
             batch_test_tokens = (input_ids != pad_id).sum()
             test_tokens += batch_test_tokens
-            logits, loss, labels = model.inference(input_ids, sliding_window_size, mlm_probability=final_mlm_prob)
+            logits, loss, labels = model.inference(input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob)
             test_loss += loss * batch_test_tokens
             all_logits.extend(logits.detach().cpu().flatten().tolist())
             all_labels.extend(labels.detach().cpu().flatten().tolist())
