@@ -209,8 +209,8 @@ def train(args, model_config):
     final_mask_prob = torch.tensor(0.12, device='cuda')
     final_keep_replace_prob = torch.tensor(0.015, device='cuda')
 
-    lerp_mask_prob = LerpTensor(start_val=0.24, end_val=0.12, precision=0.01)
-    lerp_keep_replace_prob = LerpTensor(start_val=0.24, end_val=0.015, precision=0.015)
+    lerp_mask_prob = LerpTensor(start_val=0.2, end_val=0.12, precision=0.01)
+    lerp_keep_replace_prob = LerpTensor(start_val=0.15, end_val=0.015, precision=0.015)
     lerp_sw_size = LerpTensor(start_val=1024, end_val=args.max_length, precision=128)
 
 
