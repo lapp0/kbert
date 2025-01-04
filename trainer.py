@@ -32,6 +32,7 @@ class TrainingArguments:
     # Data hyperparams
     input_bin: str = "data/fineweb-edu/fwedu_train_*.bin"
     input_valid_bin: str = "data/fineweb-edu/fwedu_valid_*.bin"
+
     # Optimization hyperparams
     batch_size: int = 8*64*1024
     grad_accum: int = 1
@@ -39,6 +40,15 @@ class TrainingArguments:
     warmup_steps: int = 200
     cooldown_steps: int = 2000
     max_length: int = 2**16
+
+    # adam
+    lr_embed: float = 0.3  # change to 0.6
+    lr_head: float = 0.001  # change to 0.008
+    lr_scalar: float = 0.01  # change to 0.04
+    # muon
+    lr_hidden: float = 0.01  # change to 0.05
+    muon_momentum_warmup_steps: int = 300  # steps for warmup momentum, 0.85 -> 0.95
+
     # Evaluation and logging hyperparams
     valid_loss_every: int = 250
     hf_model_name: Optional[str] = None
@@ -141,16 +151,19 @@ def train(args, model_config):
     model = DDP(model, device_ids=[ddp_local_rank], broadcast_buffers=False, gradient_as_bucket_view=True)
     raw_model = model.module
 
-    # init the optimizers
-    embed_params = list(raw_model.embed.parameters())
-    params = list(raw_model.blocks.parameters())
-    matrix_params = [p for p in params if p.ndim == 2]
-    scalar_params = [p for p in params if p.ndim < 2] + [raw_model.skip_weights]
-    optimizer1 = torch.optim.Adam(embed_params, lr=0.3, betas=(0.8, 0.95), fused=True)
-    optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.001, betas=(0.8, 0.95), fused=True)
-    optimizer3 = Muon(matrix_params, lr=0.01, momentum=0.95)
-    optimizer4 = torch.optim.Adam(scalar_params, lr=0.01, betas=(0.8, 0.95), fused=True)
-    optimizers = [optimizer1, optimizer2, optimizer3, optimizer4]
+    # collect the parameters to optimize
+    embed_params = [model.embed.weight]
+    head_params = [model.lm_head.weight]
+    scalar_params = [p for p in model.parameters() if p.ndim < 2]
+    hidden_matrix_params = [p for p in model.blocks.parameters() if p.ndim == 2]
+
+    # init the optimizer(s)
+    adam_optimizer = torch.optim.Adam([dict(params=embed_params, lr=args.lr_embed),
+                                   dict(params=head_params, lr=args.lr_head),
+                                   dict(params=scalar_params, lr=args.lr_scalar)],
+                                  betas=(0.8, 0.95), fused=True)
+    muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)
+    optimizers = [adam_optimizer, muon_optimizer]
 
     # learning rate decay scheduler (linear warmup and cooldown)
     def get_lr(it):
@@ -272,8 +285,8 @@ def train(args, model_config):
             for p in model.parameters():
                 p.grad /= train_accumulation_steps
         # momentum warmup for Muon
-        frac = min(step/300, 1)
-        for group in optimizer3.param_groups:
+        frac = min(step/args.muon_momentum_warmup_steps, 1)
+        for group in muon_optimizer.param_groups:
             group['momentum'] = (1 - frac) * 0.85 + frac * 0.95
         # step the optimizers and schedulers
         for opt, sched in zip(optimizers, schedulers):
