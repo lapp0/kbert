@@ -17,7 +17,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
 from optimizer import Muon
-from model import ModelConfig, KBERT, CastedLinear
+from model import KBERT, CastedLinear
 from dataloading import DistributedPaddedDataLoader
 
 
@@ -25,6 +25,15 @@ code = open(sys.argv[0]).read()
 code += open('optimizer.py', 'r', encoding='utf-8').read()
 code += open('model.py', 'r', encoding='utf-8').read()
 code += open('dataloading.py', 'r', encoding='utf-8').read()
+
+
+@dataclass
+class ModelConfig:
+    tokenizer_uri: str = "answerdotai/ModernBERT-base"
+    num_layers: int = 12
+    num_attention_heads: int = 6
+    model_dim: int = 768
+    intermediate_dim: int = 768 * 4
 
 
 @dataclass
@@ -129,7 +138,7 @@ def train(args, model_config):
     print0(f'Total batch size: {args.batch_size} tokens')
 
     # load tokens
-    tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base")
+    tokenizer = AutoTokenizer.from_pretrained(model_config.tokenizer_uri)
     eos_id, pad_id = tokenizer.sep_token_id, tokenizer.pad_token_id
     train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
     valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)

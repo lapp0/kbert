@@ -5,18 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
-from typing import Tuple, List
-from dataclasses import dataclass
+from typing import Tuple
 from transformers import AutoTokenizer
-
-
-@dataclass
-class ModelConfig:
-    tokenizer_uri: str = "answerdotai/ModernBERT-base"
-    num_layers: int = 12
-    num_attention_heads: int = 6
-    model_dim: int = 768
-    intermediate_dim: int = 768 * 4
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:
@@ -115,7 +105,7 @@ class Block(nn.Module):
 
 
 class KBERT(nn.Module):
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: "ModelConfig"):
         super().__init__()
         self.config = config
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
