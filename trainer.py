@@ -17,7 +17,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
 from optimizer import Muon
-from model import KBERT, CastedLinear
+from model import KBERT, CastedLinear, ModelConfig
 from dataloading import DistributedPaddedDataLoader
 
 
@@ -25,15 +25,6 @@ code = open(sys.argv[0]).read()
 code += open('optimizer.py', 'r', encoding='utf-8').read()
 code += open('model.py', 'r', encoding='utf-8').read()
 code += open('dataloading.py', 'r', encoding='utf-8').read()
-
-
-@dataclass
-class ModelConfig:
-    tokenizer_uri: str = "answerdotai/ModernBERT-base"
-    num_layers: int = 12
-    num_attention_heads: int = 6
-    model_dim: int = 768
-    intermediate_dim: int = 768 * 4
 
 
 @dataclass
@@ -161,10 +152,10 @@ def train(args, model_config):
     raw_model = model.module
 
     # collect the parameters to optimize
-    embed_params = [model.embed.weight]
-    head_params = [model.lm_head.weight]
-    scalar_params = [p for p in model.parameters() if p.ndim < 2]
-    hidden_matrix_params = [p for p in model.blocks.parameters() if p.ndim == 2]
+    embed_params = [raw_model.embed.weight]
+    head_params = [raw_model.lm_head.weight]
+    scalar_params = [p for p in raw_model.parameters() if p.ndim < 2]
+    hidden_matrix_params = [p for p in raw_model.blocks.parameters() if p.ndim == 2]
 
     # init the optimizer(s)
     adam_optimizer = torch.optim.Adam([dict(params=embed_params, lr=args.lr_embed),

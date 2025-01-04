@@ -6,7 +6,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 from typing import Tuple
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedModel, PretrainedConfig
+from dataclasses import dataclass
+
+@dataclass
+class ModelConfig(PretrainedConfig):
+    tokenizer_uri: str = "answerdotai/ModernBERT-base"
+    num_layers: int = 12
+    num_attention_heads: int = 6
+    model_dim: int = 768
+    intermediate_dim: int = 768 * 4
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:
@@ -61,12 +70,9 @@ class SelfAttention(nn.Module):
     def forward(self, x: torch.Tensor, v1: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         B, T = x.size(0), x.size(1)  # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
-        q = self.c_q(x).view(B, T, self.num_heads, -1)
-        k = self.c_k(x).view(B, T, self.num_heads, -1)
-        v = self.c_v(x).view(B, T, self.num_heads, -1)
-        q = q.view(B, T, self.num_attention_heads, -1)
-        k = k.view(B, T, self.num_attention_heads, -1)
-        v = v.view(B, T, self.num_attention_heads, -1)
+        q = self.c_q(x).view(B, T, self.num_attention_heads, -1)
+        k = self.c_k(x).view(B, T, self.num_attention_heads, -1)
+        v = self.c_v(x).view(B, T, self.num_attention_heads, -1)
         if v1 is None:
             v1 = v
         v = self.lambdas[0] * v + self.lambdas[1] * v1.view_as(v)
@@ -107,9 +113,11 @@ class Block(nn.Module):
         return x, v1
 
 
-class KBERT(nn.Module):
+class KBERT(PreTrainedModel):
+    config_class = ModelConfig
+
     def __init__(self, config: "ModelConfig"):
-        super().__init__()
+        super().__init__(config)
         self.config = config
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
         self.masker = MLMMasker(tokenizer)
