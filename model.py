@@ -181,7 +181,7 @@ class KBERT(nn.Module):
 class MLMMasker(nn.Module):
     def __init__(self, tokenizer):
         """
-        80% are replaced with [MASK], 10% are replaced with a random amino acid token, and 10% are unchanged.
+        Baseline: 80% replaced with [MASK], 10% replaced with a random token, and 10% unchanged.
         """
         super().__init__()
         self.mask_token_id = tokenizer.mask_token_id
