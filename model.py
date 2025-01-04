@@ -157,7 +157,7 @@ class KBERT(nn.Module):
         S = len(input_ids)
         block_mask = create_block_mask(doc_mask_mod, None, None, S, S)
 
-        x = self.embed(input_ids[None])
+        x = self.embed(input_ids[None]).bfloat16()
         x = norm(x) # @Grad62304977
         x0 = x
         v1 = None  # first layer value residual
