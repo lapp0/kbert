@@ -243,12 +243,12 @@ def train(args, model_config):
             valid_loader.reset()
             val_loss, valid_tokens = 0.0, 0
             with torch.no_grad():
-                input_ids = valid_loader.next_batch()
-                while input_ids.numel():
-                    batch_valid_tokens = (input_ids != pad_id).sum()
+                val_input_ids = valid_loader.next_batch()
+                while val_input_ids.numel():
+                    batch_valid_tokens = (val_input_ids != pad_id).sum()
                     valid_tokens += batch_valid_tokens
-                    val_loss += model(input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob) * batch_valid_tokens
-                    input_ids = valid_loader.next_batch()
+                    val_loss += model(val_input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob) * batch_valid_tokens
+                    val_input_ids = valid_loader.next_batch()
             dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
             dist.all_reduce(valid_tokens, op=dist.ReduceOp.SUM)
             val_loss /= valid_tokens
