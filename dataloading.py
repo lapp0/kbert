@@ -82,7 +82,7 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             sample = raw_tokens[prev_eos_plus_one:curr_eos+1]  # One sample: "CLS ... EOS"
 
             if not sample[0] == 50281 and sample[-1] == 50282:
-                print(f"Warning: sample[0]=={sample[0]}, sample[-1]=={sample[-1]}")
+                print(f"Warning: sample[0]=={sample[0]}, sample[-1]=={sample[-1]}, sample.numel()=={sample.numel()}")
             assert curr_batch_len < self.local_batch_size, str((curr_batch_len, self.local_batch_size))
 
             # if adding sample exceeds the batch size resulting in truncation, pad to end of batch, starting a fresh batch
