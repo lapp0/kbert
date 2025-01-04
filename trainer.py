@@ -142,7 +142,7 @@ def train(args, model_config):
     raw_model = model.module
 
     # init the optimizers
-    embed_params = [*raw_model.embed.parameters(), *raw_model.value_embeds.parameters()]
+    embed_params = list(raw_model.embed.parameters())
     params = list(raw_model.blocks.parameters())
     matrix_params = [p for p in params if p.ndim == 2]
     scalar_params = [p for p in params if p.ndim < 2] + [raw_model.skip_weights]
