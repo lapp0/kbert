@@ -13,7 +13,7 @@ git clone https://github.com/lapp0/kbert
 cd kbert
 pip install -r requirements.txt
 pip install --pre torch==2.6.0.dev20250103+cu124 torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124 --upgrade
-python data/download_fineweb_edu.py --num_chunks 10
+python data/download_fineweb_edu.py --num_chunks 30
 torchrun --standalone --nproc_per_node=8 trainer.py
 ```
 
