@@ -18,11 +18,11 @@ torchrun --standalone --nproc_per_node=8 trainer.py
 ```
 
 ##### Push to Huggingaface Hub While Training
-Only need to save your hub token once:
+Save your hub token (only need to run once):
 ```
-HF_TOKEN=<YOUR HUGGINGFACE TOKEN> python3 -c "from huggingface_hub.hf_api import HfFolder; HfFolder.save_token('${HF_TOKEN}')"
+HF_WRITE=<YOUR TOKEN> python3 -c "from huggingface_hub import HfFolder; HfFolder.save_token('${HF_WRITE}')"
 ```
-Specify your own HF model name
+Specify your own HF model name for training:
 ```
 torchrun --standalone --nproc_per_node=8 trainer.py --train.hf_model_name lapp0/kbert_trial
 ```
