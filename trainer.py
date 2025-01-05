@@ -1,3 +1,8 @@
+# Based these projects, attribution for discovered improvements within
+# https://github.com/KellerJordan/modded-nanogpt
+# and https://github.com/Synthyra/SpeedRunningESM2
+
+
 import os
 import sys
 
@@ -143,7 +148,7 @@ def train(args, model_config):
     for m in model.modules():
         if isinstance(m, CastedLinear):
             m.float()
-    config.coordinate_descent_tuning = True # suggested by @Chillee
+    config.coordinate_descent_tuning = True
     model = torch.compile(model)
 
     # wrap model in DDP only if using distributed training

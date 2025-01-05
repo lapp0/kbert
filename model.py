@@ -1,6 +1,7 @@
-# Based on projects below:
+# Based these projects, attribution for discovered improvements within
 # https://github.com/KellerJordan/modded-nanogpt
 # and https://github.com/Synthyra/SpeedRunningESM2
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -123,19 +124,17 @@ class KBERTModel(PreTrainedModel):
         self.cls_id = tokenizer.cls_token_id
         self.vocab_size = (tokenizer.vocab_size // 256 + 1) * 256  # round up to nearest 256
 
-        # U-net design by @brendanh0gan
+        # U-net design by with learnable skip connection weights for decoder layers
         self.num_layers = config.num_layers
         assert config.num_layers % 2 == 0, "Number of layers should be even for U-net design"
-        self.num_encoder_layers = config.num_layers // 2 # Half of the layers for encoder
-        self.num_decoder_layers = config.num_layers - self.num_encoder_layers # Remaining for decoder
-        # Add learnable skip connection weights for decoder layers
+        self.num_encoder_layers = config.num_layers // 2  # Half of the layers for encoder
+        self.num_decoder_layers = config.num_layers - self.num_encoder_layers  # Remaining for decoder
         self.skip_weights = nn.Parameter(torch.ones(self.num_decoder_layers))
 
-        self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
-        # U-net structure on token value embeddings by @leloykun
-        self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
 
+        self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
+        self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
         self.embed.weight = self.lm_head.weight  # tie weights
 
     def forward(self, input_ids, sliding_window_size):
@@ -151,7 +150,7 @@ class KBERTModel(PreTrainedModel):
         block_mask = create_block_mask(doc_mask_mod, None, None, S, S)
 
         x = self.embed(input_ids[None]).bfloat16()
-        x = norm(x) # @Grad62304977
+        x = norm(x)
         x0 = x
         v1 = None  # first layer value residual
 
@@ -179,7 +178,7 @@ class KBERTForSequenceClassification(PreTrainedModel):
     def get_logits(self, x: torch.Tensor) -> torch.Tensor:
         x = norm(x)
         logits = self.lm_head(x)
-        logits = 30 * torch.tanh(logits / 30) # @Grad62304977
+        logits = 15 * torch.tanh(logits / 15)
         logits = logits.float()
         return logits
 
