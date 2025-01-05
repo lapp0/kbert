@@ -3,3 +3,4 @@ tqdm
 torch
 transformers
 datasets
+evaluate
