@@ -137,6 +137,9 @@ class KBERT(PreTrainedModel):
         # U-net structure on token value embeddings by @leloykun
         self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
         self.lm_head.weight.data.zero_() # @Grad62304977
+
+        self.embed.weight = self.lm_head.weight
+
         self.cross_entropy = nn.CrossEntropyLoss()
 
     def get_logits(self, x: torch.Tensor) -> torch.Tensor:
