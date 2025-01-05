@@ -184,7 +184,7 @@ class KBERT(PreTrainedModel):
         input_ids, labels = self.masker(input_ids, mask_prob, keep_replace_prob)
         last_hs = self.encoder_pass(input_ids, sliding_window_size)
         logits = self.get_logits(last_hs)
-        return self.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
+        return F.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
 
 
 class MLMMasker(nn.Module):
