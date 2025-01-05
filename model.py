@@ -140,8 +140,6 @@ class KBERT(PreTrainedModel):
 
         self.embed.weight = self.lm_head.weight
 
-        self.cross_entropy = nn.CrossEntropyLoss()
-
     def get_logits(self, x: torch.Tensor) -> torch.Tensor:
         x = norm(x)
         logits = self.lm_head(x)
