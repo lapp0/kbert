@@ -91,8 +91,8 @@ if __name__ == "__main__":
     os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
     # download the dataset
-    ds = load_dataset("HuggingFaceFW/fineweb-edu", "sample-100BT", split="train", streaming=True)
-    train_fw = ds.take(10_000_000)
+    ds = load_dataset("HuggingFaceFW/fineweb-edu", split="train", streaming=True)
+    train_fw = ds.take(100_000_000)
     valid_fw = ds.take(40_000)
     test_fw = ds.take(40_000)
     tokenize_fw(train_fw, split='train', max_length=args.max_length)
