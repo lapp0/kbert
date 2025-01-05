@@ -20,8 +20,8 @@ from optimizer import Muon
 from model import KBERT, CastedLinear, ModelConfig
 from dataloading import DistributedPaddedDataLoader
 
-
-code = open(sys.argv[0]).read()
+code = "Command: " + " ".join(sys.argv)
+code += open(sys.argv[0]).read()
 code += open('optimizer.py', 'r', encoding='utf-8').read()
 code += open('model.py', 'r', encoding='utf-8').read()
 code += open('dataloading.py', 'r', encoding='utf-8').read()
