@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 from typing import Tuple
-from transformers import AutoTokenizer, PreTrainedModel, PretrainedConfig
+from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizer, PretrainedConfig
 from dataclasses import dataclass
 
 
