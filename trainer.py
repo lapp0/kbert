@@ -17,7 +17,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
 from optimizer import Muon
-from model import KBERT, CastedLinear, ModelConfig
+from model import KBERTForSequenceClassification, CastedLinear, ModelConfig
 from dataloading import DistributedPaddedDataLoader
 
 code = "Command: " + " ".join(sys.argv)
@@ -138,7 +138,7 @@ def train(args, model_config):
 
     train_input_ids = train_loader.next_batch()
 
-    model = KBERT(model_config)
+    model = KBERTForSequenceClassification(model_config)
     model = model.cuda().bfloat16()
     for m in model.modules():
         if isinstance(m, CastedLinear):

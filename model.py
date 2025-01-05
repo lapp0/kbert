@@ -114,19 +114,17 @@ class Block(nn.Module):
         return x, v1
 
 
-class KBERT(PreTrainedModel):
+class KBERTModel(PreTrainedModel):
     config_class = ModelConfig
 
-    def __init__(self, config: "ModelConfig"):
+    def __init__(self, config: ModelConfig, tokenizer: PreTrainedTokenizer):
         super().__init__(config)
-        self.config = config
-        tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
-        self.masker = MLMMasker(tokenizer)
+
         self.cls_id = tokenizer.cls_token_id
         self.vocab_size = (tokenizer.vocab_size // 256 + 1) * 256  # round up to nearest 256
-        self.num_layers = config.num_layers
 
         # U-net design by @brendanh0gan
+        self.num_layers = config.num_layers
         assert config.num_layers % 2 == 0, "Number of layers should be even for U-net design"
         self.num_encoder_layers = config.num_layers // 2 # Half of the layers for encoder
         self.num_decoder_layers = config.num_layers - self.num_encoder_layers # Remaining for decoder
@@ -140,14 +138,7 @@ class KBERT(PreTrainedModel):
 
         self.embed.weight = self.lm_head.weight  # tie weights
 
-    def get_logits(self, x: torch.Tensor) -> torch.Tensor:
-        x = norm(x)
-        logits = self.lm_head(x)
-        logits = 30 * torch.tanh(logits / 30) # @Grad62304977
-        logits = logits.float()
-        return logits
-
-    def encoder_pass(self, input_ids, sliding_window_size):
+    def forward(self, input_ids, sliding_window_size):
         input_ids = input_ids.flatten()
         docs = (input_ids == self.cls_id).cumsum(dim=0)  # shape: [S]
 
@@ -175,6 +166,23 @@ class KBERT(PreTrainedModel):
 
         return x
 
+
+class KBERTForSequenceClassification(PreTrainedModel):
+    config_class = ModelConfig
+
+    def __init__(self, config: "ModelConfig"):
+        super().__init__(config)
+        tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
+        self.masker = MLMMasker(tokenizer)
+        self.model = KBERTModel(config, tokenizer)
+
+    def get_logits(self, x: torch.Tensor) -> torch.Tensor:
+        x = norm(x)
+        logits = self.lm_head(x)
+        logits = 30 * torch.tanh(logits / 30) # @Grad62304977
+        logits = logits.float()
+        return logits
+
     def forward(
             self,
             input_ids: torch.Tensor,
@@ -182,7 +190,7 @@ class KBERT(PreTrainedModel):
             mask_prob: torch.Tensor,
             keep_replace_prob: torch.Tensor) -> torch.Tensor:
         input_ids, labels = self.masker(input_ids, mask_prob, keep_replace_prob)
-        last_hs = self.encoder_pass(input_ids, sliding_window_size)
+        last_hs = self.model(input_ids, sliding_window_size)
         logits = self.get_logits(last_hs)
         return F.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
 
