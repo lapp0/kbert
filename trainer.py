@@ -152,14 +152,12 @@ def train(args, model_config):
     raw_model = model.module
 
     # collect the parameters to optimize
-    embed_params = [raw_model.embed.weight]
-    head_params = [raw_model.lm_head.weight]
+    embed_params = [raw_model.lm_head.weight]  # lm_head tied to input embeds
     scalar_params = [p for p in raw_model.parameters() if p.ndim < 2]
     hidden_matrix_params = [p for p in raw_model.blocks.parameters() if p.ndim == 2]
 
     # init the optimizer(s)
     adam_optimizer = torch.optim.Adam([dict(params=embed_params, lr=args.lr_embed),
-                                       dict(params=head_params, lr=args.lr_head),
                                        dict(params=scalar_params, lr=args.lr_scalar)],
                                       betas=(0.8, 0.95), fused=True)
     muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)

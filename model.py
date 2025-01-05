@@ -9,6 +9,7 @@ from typing import Tuple
 from transformers import AutoTokenizer, PreTrainedModel, PretrainedConfig
 from dataclasses import dataclass
 
+
 @dataclass
 class ModelConfig(PretrainedConfig):
     tokenizer_uri: str = "answerdotai/ModernBERT-base"
@@ -136,9 +137,8 @@ class KBERT(PreTrainedModel):
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
         # U-net structure on token value embeddings by @leloykun
         self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
-        self.lm_head.weight.data.zero_() # @Grad62304977
 
-        self.embed.weight = self.lm_head.weight
+        self.embed.weight = self.lm_head.weight  # tie weights
 
     def get_logits(self, x: torch.Tensor) -> torch.Tensor:
         x = norm(x)
