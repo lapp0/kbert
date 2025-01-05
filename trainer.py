@@ -277,8 +277,8 @@ def train(args, model_config):
             with contextlib.ExitStack() as stack:
                 if ddp_world_size > 1 and i < train_accumulation_steps: # there's no need to sync gradients every accumulation step
                     stack.enter_context(model.no_sync())
-                if step >= 5:
-                    stack.enter_context(torch.compiler.set_stance(skip_guard_eval_unsafe=True))
+                #if step >= 5:
+                #    stack.enter_context(torch.compiler.set_stance(skip_guard_eval_unsafe=True))
                 model(train_input_ids, sliding_window_size, mask_prob, keep_replace_prob).backward()
                 train_input_ids = train_loader.next_batch()
         if train_accumulation_steps != 1:
