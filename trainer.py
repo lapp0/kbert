@@ -37,16 +37,15 @@ class TrainingArguments:
     batch_size: int = 8*64*1024
     grad_accum: int = 1
     num_steps: int = 20000
-    warmup_steps: int = 200
-    cooldown_steps: int = 2000
+    warmup_steps: int = 0
+    cooldown_steps: int = 5000
     max_length: int = 2**16
 
     # adam
-    lr_embed: float = 0.3  # change to 0.6
-    lr_head: float = 0.001  # change to 0.008
-    lr_scalar: float = 0.01  # change to 0.04
+    lr_embed: float = 0.01
+    lr_scalar: float = 0.005
     # muon
-    lr_hidden: float = 0.01  # change to 0.05
+    lr_hidden: float = 0.005
     muon_momentum_warmup_steps: int = 300  # steps for warmup momentum, 0.85 -> 0.95
 
     # Evaluation and logging hyperparams
