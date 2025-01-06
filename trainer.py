@@ -77,7 +77,7 @@ dist.barrier()
 master_process = (ddp_rank == 0)
 
 
-def train(args, model_config):
+def train(args, model, tokenizer):
     print(f'using device: {device}')
 
     # begin logging
@@ -133,7 +133,6 @@ def train(args, model_config):
     print0(f'Total batch size: {args.batch_size} tokens')
 
     # load tokens
-    tokenizer = AutoTokenizer.from_pretrained(model_config.tokenizer_uri)
     eos_id, pad_id = tokenizer.sep_token_id, tokenizer.pad_token_id
     train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
     valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
@@ -143,7 +142,6 @@ def train(args, model_config):
 
     train_input_ids = train_loader.next_batch()
 
-    model = KBERTForMaskedLM(model_config)
     model = model.cuda().bfloat16()
     for m in model.modules():
         if isinstance(m, CastedLinear):
@@ -361,4 +359,9 @@ def parse_args(dataclass_map=None):
 
 if __name__ == "__main__":
     cl_args = parse_args()
-    train(args=cl_args["train"], model_config=cl_args["model"])
+    model_config = cl_args["model"]
+    train(
+        args=cl_args["train"],
+        model=KBERTForMaskedLM(model_config),
+        tokenizer=AutoTokenizer.from_pretrained(model_config.tokenizer_uri)
+    )
