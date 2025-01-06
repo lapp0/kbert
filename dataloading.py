@@ -8,7 +8,7 @@ def _load_data_shard(file: Path):
     header = torch.from_file(f"{file}", False, 256, dtype=torch.int32)
     assert header[0] == 20240520, 'magic number mismatch in the data .bin file'
     assert header[1] == 1, 'unsupported version'
-    num_tokens = int(header[2]) # number of tokens (claimed)
+    num_tokens = int(header[2])  # number of tokens (claimed)
     with file.open('rb', buffering=0) as f:
         tokens = torch.empty(num_tokens, dtype=torch.uint16, pin_memory=True)
         f.seek(256 * 4)
@@ -32,16 +32,14 @@ class DistributedDataLoader:
         self.next_shard = 0
         self.advance()
 
-    def advance(self): # advance to next data shard
+    def advance(self):
         self.pos = 0
         self.tokens = _load_data_shard(self.files[self.next_shard])
         self.next_shard = (self.next_shard + 1) % len(self.files)
 
     def next_batch(self):
         buf = self.tokens[self.pos + self.rank * self.local_batch_size:][:self.local_batch_size]
-        # by @YouJiacheng: host side async is sufficient;
-        # no performance improvement was observed when introducing a separate stream.
-        sequence = buf.to(device="cuda", dtype=torch.int32, non_blocking=True) # inputs
+        sequence = buf.to(device="cuda", dtype=torch.int32, non_blocking=True)
         # advance current position and load next shard if necessary
         self.pos += self.batch_size
         if self.pos + self.batch_size >= len(self.tokens):
@@ -78,8 +76,8 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
 
         for i in range(len(eos_positions)):
             curr_eos = eos_positions[i]
-            prev_eos_plus_one = 0 if i == 0 else eos_positions[i-1] + 1  # EOS_idx + 1 = CLS_idx
-            sample = raw_tokens[prev_eos_plus_one:curr_eos+1]  # One sample: "CLS ... EOS"
+            prev_eos_plus_one = 0 if i == 0 else eos_positions[i - 1] + 1  # EOS_idx + 1 = CLS_idx
+            sample = raw_tokens[prev_eos_plus_one:curr_eos + 1]  # One sample: "CLS ... EOS"
 
             if not sample[0] == 50281 and sample[-1] == 50282:
                 print(f"Warning: sample[0]=={sample[0]}, sample[-1]=={sample[-1]}, sample.numel()=={sample.numel()}")
@@ -105,5 +103,5 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             curr_batch_len += len(sample)
             curr_batch_len = 0 if curr_batch_len == self.local_batch_size else curr_batch_len
 
-        self._leftover_tokens = raw_tokens[curr_eos+1:]
+        self._leftover_tokens = raw_tokens[curr_eos + 1:]
         self.tokens = torch.cat(processed_chunks, dim=0)

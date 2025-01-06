@@ -19,8 +19,8 @@ torchrun --standalone --nproc_per_node=8 trainer.py
 
 ##### Push to Huggingaface Hub While Training
 
-1) Login once to save credentials via `huggingface-cli login` (only run once)
-2) Specify your own HF model name for training:
+1) Login to save credentials via `huggingface-cli login` (only need to run once)
+2) Specify your own HF model URI for training:
 ```
 torchrun --standalone --nproc_per_node=8 trainer.py --train.hf_model_name lapp0/kbert_trial
 ```
