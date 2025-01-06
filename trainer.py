@@ -133,9 +133,9 @@ def train(args, model, tokenizer):
     print0(f'Total batch size: {args.batch_size} tokens')
 
     # load tokens
-    eos_id, pad_id = tokenizer.sep_token_id, tokenizer.pad_token_id
-    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
-    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, eos_id=eos_id, pad_id=pad_id)
+    bos_id, pad_id = tokenizer.cls_token_id, tokenizer.pad_token_id
+    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id)
+    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id)
     print0(f'Training DataLoader: {len(train_loader.files)} files')
     print0(f'Validation DataLoader: {len(valid_loader.files)} files')
     print0('='*100, logonly=True)

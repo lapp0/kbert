@@ -48,8 +48,8 @@ class DistributedDataLoader:
 
 
 class DistributedPaddedDataLoader(DistributedDataLoader):
-    def __init__(self, filename_pattern, seq_len, process_rank, num_processes, eos_id, pad_id, max_epochs=1):
-        self.eos_id = eos_id
+    def __init__(self, filename_pattern, seq_len, process_rank, num_processes, bos_id, pad_id, max_epochs=1):
+        self.bos_id = bos_id
         self.pad_id = pad_id
         self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
         self.max_epochs = max_epochs
@@ -60,10 +60,11 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
 
         # handle epoch limit
         if self.next_shard // len(self.files) < self.max_epochs:
-            raw_tokens = _load_data_shard(self.files[self.next_shard % len(self.files)])
-            raw_tokens = torch.cat([self._leftover_tokens, raw_tokens], dim=0)
+            next_tokens = _load_data_shard(self.files[self.next_shard % len(self.files)])
+            raw_tokens = torch.cat([self._leftover_tokens, next_tokens], dim=0)
             self.next_shard += 1
         else:
+            next_tokens = None
             raw_tokens = self._leftover_tokens
         if not raw_tokens.numel():
             self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
@@ -72,16 +73,25 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
 
         processed_chunks = []
         curr_batch_len = 0
-        eos_positions = (raw_tokens == self.eos_id).nonzero(as_tuple=True)[0]
+        bos_positions = (raw_tokens == self.bos_id).nonzero(as_tuple=True)[0]
 
-        for i in range(len(eos_positions)):
-            curr_eos = eos_positions[i]
-            prev_eos_plus_one = 0 if i == 0 else eos_positions[i - 1] + 1  # EOS_idx + 1 = CLS_idx
-            sample = raw_tokens[prev_eos_plus_one:curr_eos + 1]  # One sample: "CLS ... EOS"
+        assert bos_positions[0] == 0  #TODO: REMOVE
 
+        for i in range(len(bos_positions) - 1):
+            if i < len(bos_positions) - 2:
+                sample_end = bos_positions[i + 1] - 1
+            elif next_tokens is None:
+                sample_end = -1
+            else:
+                break
+            curr_bos = bos_positions[i]
+
+            sample = raw_tokens[curr_bos:sample_end]  # One sample: "CLS ... EOS"
+
+            # TODO: REMOVE
             if not sample[0] == 50281 and sample[-1] == 50282:
                 print(f"Warning: sample[0]=={sample[0]}, sample[-1]=={sample[-1]}, sample.numel()=={sample.numel()}")
-                print(f"\ti={i}, eos_positions[:i]=={eos_positions[:i]}")
+                print(f"\ti={i}, bos_positions[:i]=={bos_positions[:i]}")
             assert curr_batch_len < self.local_batch_size, str((curr_batch_len, self.local_batch_size))
 
             # if adding sample exceeds the batch size resulting in truncation, pad to end of batch, starting a fresh batch
@@ -103,5 +113,6 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             curr_batch_len += len(sample)
             curr_batch_len = 0 if curr_batch_len == self.local_batch_size else curr_batch_len
 
-        self._leftover_tokens = raw_tokens[curr_eos + 1:]
+        self._leftover_tokens = torch.empty(0, dtype=torch.uint16) if next_tokens is None else raw_tokens[sample_end + 1:]
         self.tokens = torch.cat(processed_chunks, dim=0)
+
