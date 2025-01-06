@@ -41,9 +41,9 @@ class TrainingArguments:
     # Optimization hyperparams
     batch_size: int = 8*64*1024
     grad_accum: int = 1
-    num_steps: int = 20000
-    warmup_steps: int = 0
-    cooldown_steps: int = 5000
+    num_steps: int = 15_000
+    warmup_steps: int = 1000
+    cooldown_steps: int = 10_000
     max_length: int = 2**16
 
     # adam
