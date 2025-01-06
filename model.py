@@ -17,7 +17,7 @@ class ModelConfig(PretrainedConfig):
     num_layers: int = 12
     num_attention_heads: int = 6
     model_dim: int = 768
-    intermediate_dim: int = 768 * 3
+    intermediate_dim: int = 768 * 2
 
 
 @dataclass
