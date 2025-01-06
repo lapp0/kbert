@@ -110,7 +110,7 @@ class Block(nn.Module):
     def forward(self, x: torch.Tensor, v1: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         x = self.lambdas[0] * x + self.lambdas[1] * x0
         x_out, v1 = self.attn(norm(x), v1, block_mask)
-        x += x_out
+        x = x + x_out
         x = x + self.mlp(norm(x))
         return x, v1
 
