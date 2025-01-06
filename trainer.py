@@ -22,7 +22,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
 from optimizer import Muon
-from model import KBERTForSequenceClassification, CastedLinear, ModelConfig
+from model import KBERTForMaskedLM, CastedLinear, ModelConfig
 from dataloading import DistributedPaddedDataLoader
 
 code = "Command: " + " ".join(sys.argv)
@@ -143,7 +143,7 @@ def train(args, model_config):
 
     train_input_ids = train_loader.next_batch()
 
-    model = KBERTForSequenceClassification(model_config)
+    model = KBERTForMaskedLM(model_config)
     model = model.cuda().bfloat16()
     for m in model.modules():
         if isinstance(m, CastedLinear):
@@ -157,8 +157,8 @@ def train(args, model_config):
 
     # collect the parameters to optimize
     embed_params = [raw_model.lm_head.weight]  # lm_head tied to input embeds
-    scalar_params = [p for p in raw_model.parameters() if p.ndim < 2]
-    hidden_matrix_params = [p for p in raw_model.blocks.parameters() if p.ndim == 2]
+    scalar_params = [p for p in raw_model.encoder.parameters() if p.ndim < 2]
+    hidden_matrix_params = [p for p in raw_model.encoder.blocks.parameters() if p.ndim == 2]
 
     # init the optimizer(s)
     adam_optimizer = torch.optim.Adam([dict(params=embed_params, lr=args.lr_embed),
