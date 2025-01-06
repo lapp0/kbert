@@ -228,9 +228,7 @@ class KBERTForSequenceClassification(PreTrainedModel):
 
 class MLMMasker(nn.Module):
     def __init__(self, tokenizer):
-        """
-        Baseline: 80% replaced with [MASK], 10% replaced with a random token, and 10% unchanged.
-        """
+        """ELECTRA-style MLM objective, replacing mask_prob with mask, and randomly replacing keep_replace_prob"""
         super().__init__()
         self.mask_token_id = tokenizer.mask_token_id
         standard_tokens = [tok_id for tok_id in tokenizer.vocab.values() if tok_id not in tokenizer.all_special_ids]
@@ -240,35 +238,19 @@ class MLMMasker(nn.Module):
     def __call__(
             self, input_ids: torch.Tensor, mask_prob: torch.Tensor, keep_replace_prob: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # include mlm_prob tokens in MLM objective
+        mlm_prob = mask_prob + 2 * keep_replace_prob
         labels = input_ids.clone()
+        special_tokens_mask = (input_ids[..., None] == self.special_tokens).any(dim=-1)
+        inclusion_mask = torch.bernoulli((~special_tokens_mask).float() * mlm_prob).bool()
+        labels[~inclusion_mask] = -100
 
-        # Create special tokens mask using broadcasting
-        special_tokens_mask = (input_ids[..., None] == self.special_tokens).any(-1)
-
-        mlm_prob = mask_prob + keep_replace_prob * 2
+        # replace mask_prob tokens with <mask>, keep_replace_prob tokens with random token
         mask_portion = mask_prob / mlm_prob
+        replace_with_mask = torch.bernoulli(inclusion_mask.float() * mask_portion).bool()
+        replace_with_rand = torch.bernoulli((inclusion_mask & ~replace_with_mask).float() * 0.5).bool()
+        random_ids = torch.randint(0, self.standard_tokens.numel(), (replace_with_rand.sum(),), device=labels.device)
+        input_ids[replace_with_mask] = self.mask_token_id
+        input_ids[replace_with_rand] = self.standard_tokens[random_ids]
 
-        # Create probability matrix and mask special tokens
-        probability_matrix = torch.ones_like(labels, dtype=torch.float) * mlm_prob
-        probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
-
-        # Create masked indices
-        masked_indices = torch.bernoulli(probability_matrix).bool()
-        labels[~masked_indices] = -100  # We only compute loss on masked tokens
-
-        # mask_prob% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-        indices_replaced = torch.bernoulli(torch.full_like(probability_matrix, mask_portion)).bool() & masked_indices
-        input_ids[indices_replaced] = self.mask_token_id
-
-        # keep_replace_prob% of the time, we replace masked input tokens with random word
-        replacement_idxs = torch.bernoulli(
-            torch.full_like(probability_matrix, 0.5)
-        ).bool() & masked_indices & ~indices_replaced
-        random_token_idxs = torch.randint(
-            0, self.standard_tokens.numel(), (replacement_idxs.sum(),),
-            dtype=input_ids.dtype, device=replacement_idxs.device
-        )
-        input_ids[replacement_idxs] = self.standard_tokens[random_token_idxs]
-
-        # The rest of the time (keep_replace_prob% of the time again) we keep the masked input tokens unchanged
         return input_ids, labels
