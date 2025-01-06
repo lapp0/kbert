@@ -55,7 +55,7 @@ class TrainingArguments:
 
     # Evaluation and logging hyperparams
     valid_loss_every: int = 250
-    hf_model_name: Optional[str] = None
+    hf_model_name: Optional[str] = "lapp0/kbert_trial"
     save_every: Optional[int] = None
 
 
