@@ -189,11 +189,12 @@ def train(args, model, tokenizer):
     muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)
 
     adam_params = []
-    adam_params.append(dict(params=[raw_model.lm_head.weight], lr=args.lr_embed))
+    adam_params.append(dict(params=[raw_model.model.embed.weight], lr=args.lr_embed))
     adam_params.append(dict(params=[p for p in raw_model.model.parameters() if p.ndim < 2], lr=args.lr_scalar))
 
-    head_params = [name.weight for name, module in model.named_children() if name.endswith("_head")]
+    head_params = [module.weight for name, module in raw_model.named_modules() if name.endswith("_head")]
     if args.lr_head:
+        assert len(head_params) == 1
         adam_params.append(dict(params=head_params, lr=args.lr_head))
     elif head_params[0].data_ptr() != raw_model.lm_head.weight.data_ptr():
         raise ValueError("Set args.lr_head or tie head to embeddings")

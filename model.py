@@ -28,6 +28,7 @@ class ModelConfig(PretrainedConfig):
 
 @dataclass
 class SequenceClassificationModelConfig(ModelConfig):
+    architectures = ("KBERTForSequenceClassification",)
     num_labels: int
 
 
@@ -219,12 +220,12 @@ class KBERTForSequenceClassification(PreTrainedModel):
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
         self.num_labels = config.num_labels
         self.model = KBERTModel(config, tokenizer)
-        self.classifier = CastedLinear(config.model_dim, config.num_labels)
-        self.classifier.weight.data.zero_()
+        self.classifier_head = CastedLinear(config.model_dim, config.num_labels)
+        self.classifier_head.weight.data.zero_()
 
     def get_logits(self, x: torch.Tensor) -> torch.Tensor:
         x = norm(x)
-        logits = self.classifier(x)
+        logits = self.classifier_head(x)
         logits = 15 * torch.tanh(logits / 15)
         logits = logits.float()
         return logits
