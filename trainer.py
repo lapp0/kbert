@@ -41,9 +41,9 @@ class TrainingArguments:
     # Optimization hyperparams
     batch_size: int = 8*64*1024
     grad_accum: int = 1
-    num_steps: int = 15_000
+    num_steps: int = 25_000
     warmup_steps: int = 1000
-    cooldown_steps: int = 10_000
+    cooldown_steps: int = 15_000
     max_length: int = 2**16
 
     # adam
@@ -56,8 +56,8 @@ class TrainingArguments:
     objective: str = "mlm"
 
     # Evaluation and logging hyperparams
-    valid_loss_every: int = 250
-    hf_model_name: Optional[str] = "lapp0/kbert_trial"
+    valid_loss_every: int = 500
+    hf_model_name: Optional[str] = "lapp0/kbert_trial0"
     save_every: Optional[int] = None
 
 
