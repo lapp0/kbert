@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 from typing import Tuple, Optional
 from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizer, PretrainedConfig
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 
 
 @dataclass
@@ -19,12 +19,8 @@ class ModelConfig(PretrainedConfig):
     model_dim: int = 768
     intermediate_dim: int = 768 * 2
 
-    # needed for from_pretrained
-    #architectures: list = ("KBERTForSequenceClassification", "KBERTForMaskedLM",)
-    #torch_dtype: str = "bfloat16"
-    #transformers_version: str = ""
-
     def __init__(self, **kwargs):
+        # ignore PretrainedConfig implicit attributes
         for f in fields(self):
             if f.name in kwargs:
                 setattr(self, f.name, kwargs.pop(f.name))
