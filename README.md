@@ -6,7 +6,7 @@ Based on
 
 ## Quick Start
 
-Setup environment and train KBERT
+Setup environment
 
 ```
 git clone https://github.com/lapp0/kbert
@@ -14,15 +14,29 @@ cd kbert
 pip install -r requirements.txt
 pip install --pre torch==2.6.0.dev20250103+cu124 torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124 --upgrade
 python data/download_fineweb_edu.py --num_chunks 30
-torchrun --standalone --nproc_per_node=8 trainer.py
 ```
+
+```
+export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+```
+
+Pretrain KBERT on Fineweb EDU with MLM objective
+```
+torchrun --standalone --nproc_per_node=$NUM_GPUS trainer.py
+```
+
+Finetune KBERT on MNLI with sequence classification objective
+```
+torchrun --standalone --nproc_per_node=$NUM_GPUS finetuner.py
+```
+
 
 ##### Push to Huggingaface Hub While Training
 
 1) Login to save credentials via `huggingface-cli login` (only need to run once)
 2) Specify your own HF model URI for training:
 ```
-torchrun --standalone --nproc_per_node=8 trainer.py --train.hf_model_name lapp0/kbert_trial
+torchrun --standalone --nproc_per_node=$NUM_GPUS trainer.py --train.hf_model_name lapp0/kbert_trial
 ```
 
 

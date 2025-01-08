@@ -6,9 +6,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
-from typing import Tuple
+from typing import Tuple, Optional
 from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizer, PretrainedConfig
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 
 
 @dataclass
@@ -18,6 +18,16 @@ class ModelConfig(PretrainedConfig):
     num_attention_heads: int = 6
     model_dim: int = 768
     intermediate_dim: int = 768 * 2
+
+    # needed for from_pretrained
+    #architectures: list = ("KBERTForSequenceClassification", "KBERTForMaskedLM",)
+    #torch_dtype: str = "bfloat16"
+    #transformers_version: str = ""
+
+    def __init__(self, **kwargs):
+        for f in fields(self):
+            if f.name in kwargs:
+                setattr(self, f.name, kwargs.pop(f.name))
 
 
 @dataclass
@@ -139,14 +149,16 @@ class KBERTModel(PreTrainedModel):
         self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
 
-    def forward(self, input_ids, sliding_window_size):
+    def forward(self, input_ids, sliding_window_size: Optional[torch.Tensor] = None):
         input_ids = input_ids.flatten()
         docs = (input_ids == self.cls_id).cumsum(dim=0)  # shape: [S]
 
         def doc_mask_mod(b, h, q_idx, kv_idx):
-            bidirectional_sliding_window_mask = torch.abs(q_idx - kv_idx) < sliding_window_size
-            doc_mask = docs[q_idx] == docs[kv_idx]
-            return bidirectional_sliding_window_mask & doc_mask
+            mask = docs[q_idx] == docs[kv_idx]
+            if sliding_window_size is not None:
+                bidirectional_sliding_window_mask = torch.abs(q_idx - kv_idx) < sliding_window_size
+                mask = mask & bidirectional_sliding_window_mask
+            return mask
 
         S = len(input_ids)
         block_mask = create_block_mask(doc_mask_mod, None, None, S, S)
@@ -170,44 +182,18 @@ class KBERTModel(PreTrainedModel):
 
 class KBERTForMaskedLM(PreTrainedModel):
     config_class = ModelConfig
-
-    def __init__(self, config: "ModelConfig"):
-        super().__init__(config)
-        tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
-        self.masker = MLMMasker(tokenizer)
-        self.encoder = KBERTModel(config, tokenizer)
-        self.vocab_size = self.encoder.vocab_size
-        self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
-        self.encoder.embed.weight = self.lm_head.weight  # tie weights
-
-    def get_logits(self, x: torch.Tensor) -> torch.Tensor:
-        x = norm(x)
-        logits = self.lm_head(x)
-        logits = 15 * torch.tanh(logits / 15)
-        logits = logits.float()
-        return logits
-
-    def forward(
-            self,
-            input_ids: torch.Tensor,
-            sliding_window_size: torch.Tensor,
-            mask_prob: torch.Tensor,
-            keep_replace_prob: torch.Tensor) -> torch.Tensor:
-        input_ids, labels = self.masker(input_ids, mask_prob, keep_replace_prob)
-        last_hs = self.encoder(input_ids, sliding_window_size)
-        logits = self.get_logits(last_hs)
-        return F.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
-
-
-class KBERTForSequenceClassification(PreTrainedModel):
-    config_class = ModelConfig
+    _tied_weights_keys = ["lm_head.weight", "model.embed.weight"]
+    ignore_keys = ["masker"]
 
     def __init__(self, config: "ModelConfig"):
         super().__init__(config)
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
         self.masker = MLMMasker(tokenizer)
         self.model = KBERTModel(config, tokenizer)
-        self.classifier = CastedLinear(config.model_dim, config.num_labels)
+        self.vocab_size = self.model.vocab_size
+        self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
+        self.lm_head.weight.data.zero_()
+        self.model.embed.weight = self.lm_head.weight  # tie weights
 
     def get_logits(self, x: torch.Tensor) -> torch.Tensor:
         x = norm(x)
@@ -220,10 +206,38 @@ class KBERTForSequenceClassification(PreTrainedModel):
             self,
             input_ids: torch.Tensor,
             labels: torch.Tensor,
-            sliding_window_size: torch.Tensor) -> torch.Tensor:
+            sliding_window_size: torch.Tensor,
+            mask_prob: torch.Tensor,
+            keep_replace_prob: torch.Tensor) -> torch.Tensor:
+        input_ids, labels = self.masker(input_ids, labels, mask_prob, keep_replace_prob)
         last_hs = self.model(input_ids, sliding_window_size)
         logits = self.get_logits(last_hs)
         return F.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
+
+
+class KBERTForSequenceClassification(PreTrainedModel):
+    config_class = ModelConfig
+
+    def __init__(self, config: "ModelConfig"):
+        super().__init__(config)
+        tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
+        self.num_labels = config.num_labels
+        self.model = KBERTModel(config, tokenizer)
+        self.classifier = CastedLinear(config.model_dim, config.num_labels)
+        self.classifier.weight.data.zero_()
+
+    def get_logits(self, x: torch.Tensor) -> torch.Tensor:
+        x = norm(x)
+        logits = self.classifier(x)
+        logits = 15 * torch.tanh(logits / 15)
+        logits = logits.float()
+        return logits
+
+    def forward(self, input_ids: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        last_hs = self.model(input_ids)
+        logits = self.get_logits(last_hs)
+        loss = F.cross_entropy(logits.view(-1, self.num_labels), labels.view(-1).long())
+        return loss
 
 
 class MLMMasker(nn.Module):
@@ -236,11 +250,10 @@ class MLMMasker(nn.Module):
         self.register_buffer("special_tokens", torch.tensor(tokenizer.all_special_ids, dtype=torch.int32))
 
     def __call__(
-            self, input_ids: torch.Tensor, mask_prob: torch.Tensor, keep_replace_prob: torch.Tensor
+            self, input_ids: torch.Tensor, labels: torch.Tensor, mask_prob: torch.Tensor, keep_replace_prob: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # include mlm_prob tokens in MLM objective
         mlm_prob = mask_prob + 2 * keep_replace_prob
-        labels = input_ids.clone()
         special_tokens_mask = (input_ids[..., None] == self.special_tokens).any(dim=-1)
         inclusion_mask = torch.bernoulli((~special_tokens_mask).float() * mlm_prob).bool()
         labels[~inclusion_mask] = -100

@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 from pathlib import Path
 
@@ -18,13 +19,15 @@ def _load_data_shard(file: Path):
 
 
 class DistributedDataLoader:
-    def __init__(self, filename_pattern: str, batch_size: int, rank: int, world_size: int):
+    def __init__(self, filename_pattern: str, batch_size: int, rank: int, world_size: int, to_input_labels: Optional[callable] = None):
         assert batch_size % world_size == 0
         self.world_size = world_size
         self.rank = rank
         self.files = sorted(Path.cwd().glob(filename_pattern))
         self.batch_size = batch_size
         self.local_batch_size = self.batch_size // self.world_size
+
+        self.to_input_labels = to_input_labels
 
         self.reset()
 
@@ -44,16 +47,23 @@ class DistributedDataLoader:
         self.pos += self.batch_size
         if self.pos + self.batch_size >= len(self.tokens):
             self.advance()
-        return sequence
+        if self.to_input_labels is None or not sequence.numel():
+            return sequence, sequence.clone()
+        else:
+            return self.to_input_labels(sequence)
 
 
 class DistributedPaddedDataLoader(DistributedDataLoader):
-    def __init__(self, filename_pattern, seq_len, process_rank, num_processes, bos_id, pad_id, max_epochs=1):
+    def __init__(
+            self, filename_pattern, seq_len, process_rank, num_processes,
+            bos_id, pad_id, max_epochs=1, to_input_labels=None, allow_windowed=False
+    ):
         self.bos_id = bos_id
         self.pad_id = pad_id
+        self.allow_windowed = allow_windowed
         self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
         self.max_epochs = max_epochs
-        super().__init__(filename_pattern, seq_len, process_rank, num_processes)
+        super().__init__(filename_pattern, seq_len, process_rank, num_processes, to_input_labels=to_input_labels)
 
     def advance(self):
         self.pos = 0
@@ -76,12 +86,11 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
         bos_positions = (raw_tokens == self.bos_id).nonzero(as_tuple=True)[0]
 
         assert bos_positions[0] == 0  #TODO: REMOVE
-
         for i in range(len(bos_positions) - 1):
             if i < len(bos_positions) - 2:
                 sample_end = bos_positions[i + 1] - 1
             elif next_tokens is None:
-                sample_end = -1
+                sample_end = len(raw_tokens)
             else:
                 break
             curr_bos = bos_positions[i]
@@ -89,7 +98,7 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             sample = raw_tokens[curr_bos:sample_end]  # One sample: "CLS ... EOS"
 
             # TODO: REMOVE
-            if not sample[0] == 50281 and sample[-1] == 50282:
+            if not sample[0] == 50281:
                 print(f"Warning: sample[0]=={sample[0]}, sample[-1]=={sample[-1]}, sample.numel()=={sample.numel()}")
                 print(f"\ti={i}, bos_positions[:i]=={bos_positions[:i]}")
             assert curr_batch_len < self.local_batch_size, str((curr_batch_len, self.local_batch_size))
@@ -102,6 +111,7 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
 
             # if len(sample) > local batch size, chunk evenly, making multiple padded batches, starting a fresh batch
             if len(sample) > self.local_batch_size:
+                assert self.allow_windowed, "Sampler larger than local batch size and windowed sampled are illegal"
                 for split_sample in torch.chunk(sample, len(sample) // self.local_batch_size + 1):
                     processed_chunks.append(split_sample)
                     num_pad = self.local_batch_size - len(split_sample)
@@ -115,4 +125,3 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
 
         self._leftover_tokens = torch.empty(0, dtype=torch.uint16) if next_tokens is None else raw_tokens[sample_end + 1:]
         self.tokens = torch.cat(processed_chunks, dim=0)
-

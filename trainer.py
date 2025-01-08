@@ -53,6 +53,8 @@ class TrainingArguments:
     lr_hidden: float = 0.005
     muon_momentum_warmup_steps: int = 300  # steps for warmup momentum, 0.85 -> 0.95
 
+    objective: str = "mlm"
+
     # Evaluation and logging hyperparams
     valid_loss_every: int = 250
     hf_model_name: Optional[str] = "lapp0/kbert_trial"
@@ -111,7 +113,7 @@ def train(args, model, tokenizer):
     print0(f'{result.stdout}', logonly=True)
     print0('='*100, logonly=True)
 
-    print0(f'Model config: {model_config}')
+    print0(f'Model config: {model.config}')
     print0(f'Args: {args.__dict__}')
 
     # calculate the steps of gradient accumulation required to attain the desired global batch size
@@ -134,13 +136,39 @@ def train(args, model, tokenizer):
 
     # load tokens
     bos_id, pad_id = tokenizer.cls_token_id, tokenizer.pad_token_id
-    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id)
-    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id)
+    if args.objective == "mlm":
+        to_input_labels = None
+
+    elif args.objective == "seq_classification":
+
+        def to_input_labels(seq):
+            # Convert to sequence classification format by extracting class (pos 1) and removing format code (pos 2)
+            bos_idxs = (seq == bos_id).nonzero(as_tuple=True)[0]
+            pure_labels = seq[bos_idxs + 1]
+
+            assert seq[0].item() == bos_id, seq
+            assert torch.all(seq[bos_idxs + 2] == torch.iinfo(torch.uint16).max)
+
+            # Given sequences of <bos><label><uint16 max><tok><tok>..., remove <label><uint16>
+            mask = torch.ones_like(seq, dtype=torch.bool)
+            mask[bos_idxs + 1] = False
+            mask[bos_idxs + 2] = False
+            removed_count = (~mask).sum().item()
+            seq = torch.cat([seq[mask], torch.full_like(seq[:removed_count], pad_id)])
+
+            bos_idxs = (seq == bos_id).nonzero(as_tuple=True)[0]
+            labels = torch.full_like(seq, fill_value=-100)
+            labels[bos_idxs] = pure_labels
+            return seq, labels
+
+    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels)
+    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels)
+
     print0(f'Training DataLoader: {len(train_loader.files)} files')
     print0(f'Validation DataLoader: {len(valid_loader.files)} files')
     print0('='*100, logonly=True)
 
-    train_input_ids = train_loader.next_batch()
+    train_inputs, train_labels = train_loader.next_batch()
 
     model = model.cuda().bfloat16()
     for m in model.modules():
@@ -154,9 +182,12 @@ def train(args, model, tokenizer):
     raw_model = model.module
 
     # collect the parameters to optimize
-    embed_params = [raw_model.lm_head.weight]  # lm_head tied to input embeds
-    scalar_params = [p for p in raw_model.encoder.parameters() if p.ndim < 2]
-    hidden_matrix_params = [p for p in raw_model.encoder.blocks.parameters() if p.ndim == 2]
+    if args.objective == "mlm":
+        embed_params = [raw_model.lm_head.weight]  # lm_head tied to input embeds
+    elif args.objective == "seq_classification":
+        embed_params = [raw_model.model.embed.weight, raw_model.classifier.weight]
+    scalar_params = [p for p in raw_model.model.parameters() if p.ndim < 2]
+    hidden_matrix_params = [p for p in raw_model.model.blocks.parameters() if p.ndim == 2]
 
     # init the optimizer(s)
     adam_optimizer = torch.optim.Adam([dict(params=embed_params, lr=args.lr_embed),
@@ -197,12 +228,13 @@ def train(args, model, tokenizer):
                 self.prev_val = val
             return self.gpu_val
 
-    final_mask_prob = torch.tensor(0.12, device='cuda')
-    final_keep_replace_prob = torch.tensor(0.015, device='cuda')
+    if args.objective == "mlm":
+        final_mask_prob = torch.tensor(0.12, device='cuda')
+        final_keep_replace_prob = torch.tensor(0.015, device='cuda')
 
-    lerp_mask_prob = LerpTensor(start_val=0.2, end_val=0.12, precision=0.01)
-    lerp_keep_replace_prob = LerpTensor(start_val=0.09, end_val=0.015, precision=0.0075)
-    lerp_sw_size = LerpTensor(start_val=1024, end_val=args.max_length, precision=128)
+        lerp_mask_prob = LerpTensor(start_val=0.2, end_val=0.12, precision=0.01)
+        lerp_keep_replace_prob = LerpTensor(start_val=0.09, end_val=0.015, precision=0.0075)
+        lerp_sw_size = LerpTensor(start_val=1024, end_val=args.max_length, precision=128)
 
 
     # Start training loop
@@ -219,10 +251,18 @@ def train(args, model, tokenizer):
             t0 = time.perf_counter()
         timed_steps = float('nan') if step <= 11 else (step - 10) + 1 # <= 11 to avoid bug in val
 
-        frac_done = step / args.num_steps  # training progress
-        mask_prob = lerp_mask_prob(frac_done)
-        keep_replace_prob = lerp_keep_replace_prob(frac_done)
-        sliding_window_size = lerp_sw_size(frac_done)
+        if args.objective == "mlm":
+            frac_done = step / args.num_steps  # training progress
+            mask_prob = lerp_mask_prob(frac_done)
+            keep_replace_prob = lerp_keep_replace_prob(frac_done)
+            sw_size = lerp_sw_size(frac_done)
+
+            eval_fwd_args = [sw_size, final_mask_prob, final_keep_replace_prob]
+            train_fwd_args = [sw_size, mask_prob, keep_replace_prob]
+
+        elif args.objective == "seq_classification":
+            eval_fwd_args = []
+            train_fwd_args = []
 
         # once in a while evaluate the validation dataset
         if args.valid_loss_every > 0 and step % args.valid_loss_every == 0 or last_step:
@@ -234,12 +274,11 @@ def train(args, model, tokenizer):
             valid_loader.reset()
             val_loss, valid_tokens = 0.0, 0
             with torch.no_grad():
-                val_input_ids = valid_loader.next_batch()
-                while val_input_ids.numel():
-                    batch_valid_tokens = (val_input_ids != pad_id).sum()
-                    valid_tokens += batch_valid_tokens
-                    val_loss += model(val_input_ids, sliding_window_size, final_mask_prob, final_keep_replace_prob) * batch_valid_tokens
-                    val_input_ids = valid_loader.next_batch()
+                val_inputs, val_labels = valid_loader.next_batch()
+                while val_inputs.numel():
+                    valid_tokens += len(val_inputs)
+                    val_loss += model(val_inputs, val_labels, *eval_fwd_args) * len(val_inputs)
+                    val_inputs, val_labels = valid_loader.next_batch()
             dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
             dist.all_reduce(valid_tokens, op=dist.ReduceOp.SUM)
             val_loss /= valid_tokens
@@ -279,8 +318,10 @@ def train(args, model, tokenizer):
                     stack.enter_context(model.no_sync())
                 #if step >= 5:
                 #    stack.enter_context(torch.compiler.set_stance(skip_guard_eval_unsafe=True))
-                model(train_input_ids, sliding_window_size, mask_prob, keep_replace_prob).backward()
-                train_input_ids = train_loader.next_batch()
+                if not train_inputs.numel():
+                    raise ValueError("out of training data, consider adding more epochs")
+                model(train_inputs, train_labels, *train_fwd_args).backward()
+                train_inputs, train_labels = train_loader.next_batch()
         if train_accumulation_steps != 1:
             for p in model.parameters():
                 p.grad /= train_accumulation_steps
