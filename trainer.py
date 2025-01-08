@@ -137,10 +137,12 @@ def train(args, model, tokenizer):
     # load tokens
     bos_id, pad_id = tokenizer.cls_token_id, tokenizer.pad_token_id
     if args.objective == "mlm":
+        allow_windowed = True
         to_input_labels = None
 
     elif args.objective == "seq_classification":
 
+        allow_windowed = False
         def to_input_labels(seq):
             # Convert to sequence classification format by extracting class (pos 1) and removing format code (pos 2)
             bos_idxs = (seq == bos_id).nonzero(as_tuple=True)[0]
@@ -161,8 +163,8 @@ def train(args, model, tokenizer):
             labels[bos_idxs] = pure_labels
             return seq, labels
 
-    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels)
-    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels)
+    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed)
+    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed)
 
     print0(f'Training DataLoader: {len(train_loader.files)} files')
     print0(f'Validation DataLoader: {len(valid_loader.files)} files')
