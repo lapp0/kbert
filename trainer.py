@@ -191,8 +191,9 @@ def train(args, model, tokenizer):
     adam_params = []
     adam_params.append(dict(params=[raw_model.lm_head.weight], lr=args.lr_embed))
     adam_params.append(dict(params=[p for p in raw_model.model.parameters() if p.ndim < 2], lr=args.lr_scalar))
+
+    head_params = [name.weight for name, module in model.named_children() if name.endswith("_head")]
     if args.lr_head:
-        head_params = [name.weight for name, module in model.named_children() if name.endswith("_head")]
         adam_params.append(dict(params=head_params, lr=args.lr_head))
     elif head_params[0].data_ptr() != raw_model.lm_head.weight.data_ptr():
         raise ValueError("Set args.lr_head or tie head to embeddings")
