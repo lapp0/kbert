@@ -47,6 +47,7 @@ class TrainingArguments:
     max_length: int = 2**16
 
     # adam
+    lr_head: Optional[float] = None  # tied weights
     lr_embed: float = 0.01
     lr_scalar: float = 0.005
     # muon
@@ -184,18 +185,19 @@ def train(args, model, tokenizer):
     raw_model = model.module
 
     # collect the parameters to optimize
-    if args.objective == "mlm":
-        embed_params = [raw_model.lm_head.weight]  # lm_head tied to input embeds
-    elif args.objective == "seq_classification":
-        embed_params = [raw_model.model.embed.weight, raw_model.classifier.weight]
-    scalar_params = [p for p in raw_model.model.parameters() if p.ndim < 2]
     hidden_matrix_params = [p for p in raw_model.model.blocks.parameters() if p.ndim == 2]
-
-    # init the optimizer(s)
-    adam_optimizer = torch.optim.Adam([dict(params=embed_params, lr=args.lr_embed),
-                                       dict(params=scalar_params, lr=args.lr_scalar)],
-                                      betas=(0.8, 0.95), fused=True)
     muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)
+
+    adam_params = []
+    adam_params.append(dict(params=[raw_model.lm_head.weight], lr=args.lr_embed))
+    adam_params.append(dict(params=[p for p in raw_model.model.parameters() if p.ndim < 2], lr=args.lr_scalar))
+    if args.lr_head:
+        head_params = [name.weight for name, module in model.named_children() if name.endswith("_head")]
+        adam_params.append(dict(params=head_params, lr=args.lr_head))
+    elif head_params[0].data_ptr() != raw_model.lm_head.weight.data_ptr():
+        raise ValueError("Set args.lr_head or tie head to embeddings")
+    adam_optimizer = torch.optim.Adam(adam_params, betas=(0.8, 0.95), fused=True)
+
     optimizers = [adam_optimizer, muon_optimizer]
 
     # learning rate decay scheduler (linear warmup and cooldown)
