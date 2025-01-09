@@ -61,15 +61,16 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
         self.bos_id = bos_id
         self.pad_id = pad_id
         self.allow_windowed = allow_windowed
-        self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
         self.max_epochs = max_epochs
+        self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
+        self._curr_epoch = 0
         super().__init__(filename_pattern, seq_len, process_rank, num_processes, to_input_labels=to_input_labels)
 
     def advance(self):
         self.pos = 0
 
         # handle epoch limit
-        if self.next_shard // len(self.files) < self.max_epochs:
+        if self.max_epochs is None or self.next_shard // len(self.files) < self.max_epochs:
             next_tokens = _load_data_shard(self.files[self.next_shard % len(self.files)])
             raw_tokens = torch.cat([self._leftover_tokens, next_tokens], dim=0)
             self.next_shard += 1
@@ -80,6 +81,11 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
             self.tokens = torch.empty(0, dtype=torch.uint16)
             return
+
+        curr_epoch = (self.next_shard - 1) // len(self.files)
+        if curr_epoch > self._curr_epoch:
+            print(f"end of epoch {self._curr_epoch}")
+            self._curr_epoch = curr_epoch
 
         processed_chunks = []
         curr_batch_len = 0
@@ -98,7 +104,7 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             sample = raw_tokens[curr_bos:sample_end]  # One sample: "CLS ... EOS"
 
             # TODO: REMOVE
-            if not sample[0] == 50281:
+            if sample[0] != 50281:
                 print(f"Warning: sample[0]=={sample[0]}, sample[-1]=={sample[-1]}, sample.numel()=={sample.numel()}")
                 print(f"\ti={i}, bos_positions[:i]=={bos_positions[:i]}")
             assert curr_batch_len < self.local_batch_size, str((curr_batch_len, self.local_batch_size))
