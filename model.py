@@ -200,8 +200,8 @@ class KBERTForMaskedLM(PreTrainedModel):
         super().__init__(config)
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
         self.masker = MLMMasker(tokenizer)
-        self.kbert_encoder = KBERTModel(config, tokenizer)
-        self.vocab_size = self.kbert_encoder.vocab_size
+        self.encoder = KBERTModel(config, tokenizer)
+        self.vocab_size = self.encoder.vocab_size
         self.lm_head = KBERTHead(config.model_dim, self.vocab_size, softcap=config.logit_softcap)
 
     def forward(
@@ -212,7 +212,7 @@ class KBERTForMaskedLM(PreTrainedModel):
             mask_prob: torch.Tensor,
             keep_replace_prob: torch.Tensor) -> torch.Tensor:
         input_ids, labels = self.masker(input_ids, labels, mask_prob, keep_replace_prob)
-        last_hs = self.kbert_encoder(input_ids, sliding_window_size)
+        last_hs = self.encoder(input_ids, sliding_window_size)
         logits = self.lm_head(last_hs)
         return F.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
 
@@ -225,11 +225,12 @@ class KBERTForSequenceClassification(PreTrainedModel):
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
         self.bos_id = tokenizer.cls_token_id
         self.num_labels = config.num_labels
-        self.kbert_encoder = KBERTModel(config, tokenizer)
+        self.encoder = KBERTModel(config, tokenizer)
+
         self.classifier_head = KBERTHead(config.model_dim, config.num_labels)
 
     def forward(self, input_ids: torch.Tensor, labels: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
-        last_hs = self.kbert_encoder(input_ids)
+        last_hs = self.encoder(input_ids)
         last_hs = norm(last_hs)
         pooled = last_hs[:, input_ids == self.bos_id, :]  # filter last_hs, only considering cls token outputs
         logits = self.classifier_head(pooled)
