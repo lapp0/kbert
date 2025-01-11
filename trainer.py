@@ -66,7 +66,7 @@ def get_param_count(model):
     total_params = 0
     head_params = 0
     for name, param in model.named_parameters():
-        if name.endswith("_head"):
+        if name.endswith("_head.weight"):
             head_params += param.numel()
         total_params += param.numel()
     return total_params, head_params
