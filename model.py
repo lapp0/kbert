@@ -142,8 +142,7 @@ class KBERTModel(PreTrainedModel):
         self.num_layers = config.num_layers
         assert config.num_layers % 2 == 0, "Number of layers should be even for U-net design"
         self.num_encoder_layers = config.num_layers // 2  # Half of the layers for encoder
-        self.num_decoder_layers = config.num_layers - self.num_encoder_layers  # Remaining for decoder
-        self.skip_weights = nn.Parameter(torch.ones(self.num_decoder_layers))
+        self.skip_weights = nn.Parameter(torch.ones(self.num_encoder_layers))
 
         self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
@@ -168,13 +167,12 @@ class KBERTModel(PreTrainedModel):
         v1 = None  # first layer value residual
 
         skip_connections = []
-        for i in range(self.num_encoder_layers):
+        for i in range(self.num_layers):
+            if i >= self.num_encoder_layers:
+                x = x + self.skip_weights[i - self.num_encoder_layers] * skip_connections.pop()
             x, v1 = self.blocks[i](x, v1, x0, block_mask)
-            skip_connections.append(x)
-
-        for i in range(self.num_decoder_layers):
-            x = x + self.skip_weights[i] * skip_connections.pop()
-            x, _ = self.blocks[self.num_encoder_layers + i](x, v1, x0, block_mask)
+            if i < self.num_encoder_layers:
+                skip_connections.append(x)
 
         return x
 
