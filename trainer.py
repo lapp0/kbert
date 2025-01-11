@@ -48,11 +48,11 @@ class TrainingArguments:
     max_length: int = 2**16
 
     # adam
-    lr_head: Optional[float] = None  # tied weights
-    lr_embed: float = 0.01
-    lr_scalar: float = 0.005
+    lr_head: float = 0.008 / 5
+    lr_embed: float = 0.6 / 5
+    lr_scalar: float = 0.05 / 5
     # muon
-    lr_hidden: float = 0.005
+    lr_hidden: float = 0.05 / 5
     muon_momentum_warmup_steps: int = 300  # steps for warmup momentum, 0.85 -> 0.95
 
     objective: str = "mlm"
