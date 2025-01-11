@@ -92,9 +92,11 @@ if __name__ == "__main__":
 
     # download the dataset
     ds = load_dataset("HuggingFaceFW/fineweb-edu", split="train", streaming=True)
-    train_fw = ds.take(100_000_000)
     valid_fw = ds.take(40_000)
     test_fw = ds.take(40_000)
-    tokenize_fw(train_fw, split='train', max_length=args.max_length)
+    _ = ds.take(10_000_000)  # in case we want to increase valid/test size
+    train_fw = ds.take(100_000_000)
+
     tokenize_fw(valid_fw, split='valid', max_length=args.max_length)
     tokenize_fw(test_fw, split='test', max_length=args.max_length)
+    tokenize_fw(train_fw, split='train', max_length=args.max_length)
