@@ -191,10 +191,10 @@ class KBERTHead(nn.Module):
             x = self.softcap * torch.tanh(x / self.softcap)
         return x.float()
 
+
 class KBERTForMaskedLM(PreTrainedModel):
     config_class = ModelConfig
-    _tied_weights_keys = ["lm_head.weight", "model.embed.weight"]
-    ignore_keys = ["masker"]
+    ignore_keys = ["masker.standard_tokens", "masker.special_tokens"]
 
     def __init__(self, config: "ModelConfig"):
         super().__init__(config)
