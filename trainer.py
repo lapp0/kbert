@@ -22,11 +22,12 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
 from optimizer import Muon
-from model import KBERTForMaskedLM, CastedLinear, ModelConfig
+from model import KBERTForMaskedLM, KBERTHead, CastedLinear, ModelConfig
 from dataloading import DistributedPaddedDataLoader
 
 code = "Command: " + " ".join(sys.argv) + "\n"
 code += open(sys.argv[0]).read()
+code += open('trainer.py', 'r', encoding='utf-8').read()
 code += open('optimizer.py', 'r', encoding='utf-8').read()
 code += open('model.py', 'r', encoding='utf-8').read()
 code += open('dataloading.py', 'r', encoding='utf-8').read()
