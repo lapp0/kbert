@@ -64,9 +64,12 @@ class TrainingArguments:
 
 def get_param_count(model):
     total_params = 0
-    for _, param in model.named_parameters():
+    head_params = 0
+    for name, param in model.named_parameters():
+        if name.endswith("_head"):
+            head_params += param.numel()
         total_params += param.numel()
-    return total_params
+    return total_params, head_params
 
 
 # setup dist
@@ -289,7 +292,10 @@ def train(args, model, tokenizer):
             dist.all_reduce(valid_tokens, op=dist.ReduceOp.SUM)
             val_loss /= valid_tokens
             # log val loss to console and to logfile
-            print0(f'step:{step}/{args.num_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/(timed_steps-1):.2f}ms perplexity:{(math.e**val_loss):.4f} param_count:{get_param_count(model):,} tokens: {valid_tokens.item():,}')
+            total_params, head_params = get_param_count(model)
+            print0(f'step:{step}/{args.num_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/(timed_steps-1):.2f}ms perplexity:{(math.e**val_loss):.4f} total_params:{total_params:,} head_params:{head_params:,} tokens: {valid_tokens.item():,}')
+            if args.objective == "seq_classification":
+                print0(f"validation accuracy: {accuracy / num_seqs * 100:.2f}%")
             # start the clock again
             torch.cuda.synchronize()
             t0 = time.perf_counter()
