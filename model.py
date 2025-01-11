@@ -83,21 +83,20 @@ class SelfAttention(nn.Module):
         self.o_proj = CastedLinear(dim, dim)
         self.o_proj.weight.data.zero_()
 
-    def forward(self, x: torch.Tensor, v1: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, ve: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         B, T = x.size(0), x.size(1)  # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
         q = self.c_q(x).view(B, T, self.num_attention_heads, -1)
         k = self.c_k(x).view(B, T, self.num_attention_heads, -1)
         v = self.c_v(x).view(B, T, self.num_attention_heads, -1)
-        if v1 is None:
-            v1 = v
-        v = self.lambdas[0] * v + self.lambdas[1] * v1.view_as(v)
+        ve = v if ve is None else ve
+        v = self.lambdas[0] * v + self.lambdas[1] * ve.view_as(v)
         q, k = norm(q), norm(k)
         q, k = self.rotary(q), self.rotary(k)
         y = flex_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), block_mask=block_mask)
         y = y.transpose(1, 2).contiguous().view_as(x)  # re-assemble all head outputs side by side
         y = self.o_proj(y)
-        return y, v1
+        return y
 
 
 class MLP(nn.Module):
@@ -121,12 +120,11 @@ class Block(nn.Module):
         self.mlp = MLP(config.model_dim, config.intermediate_dim)
         self.lambdas = nn.Parameter(torch.tensor([1., 0.]))
 
-    def forward(self, x: torch.Tensor, v1: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, ve: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         x = self.lambdas[0] * x + self.lambdas[1] * x0
-        x_out, v1 = self.attn(norm(x), v1, block_mask)
-        x = x + x_out
+        x = x + self.attn(norm(x), ve, block_mask)
         x = x + self.mlp(norm(x))
-        return x, v1
+        return x
 
 
 class KBERTModel(PreTrainedModel):
@@ -135,17 +133,22 @@ class KBERTModel(PreTrainedModel):
     def __init__(self, config: ModelConfig, tokenizer: PreTrainedTokenizer):
         super().__init__(config)
 
+        assert config.num_layers % 4 == 0, "num_layers must be divisible by 4 for U-net and value embeddings"
+
         self.cls_id = tokenizer.cls_token_id
         self.vocab_size = (tokenizer.vocab_size // 256 + 1) * 256  # round up to nearest 256
 
-        # U-net design by with learnable skip connection weights for decoder layers
-        self.num_layers = config.num_layers
-        assert config.num_layers % 2 == 0, "Number of layers should be even for U-net design"
-        self.num_encoder_layers = config.num_layers // 2  # Half of the layers for encoder
-        self.skip_weights = nn.Parameter(torch.ones(self.num_encoder_layers))
+        # shared value embeddings betwen first 1/4 and last 1/4th of layers
+        self.value_emb_layers = [i for i in range(config.num_layers) if i * 4 // config.num_layers in (0, 3)]
+        self.value_embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
 
         self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
+
+        # U-net design by with learnable skip connection weights for decoder layers
+        self.num_layers = config.num_layers
+        self.num_encoder_layers = config.num_layers // 2  # Half of the layers for encoder
+        self.skip_weights = nn.Parameter(torch.ones(self.num_encoder_layers))
 
     def forward(self, input_ids, sliding_window_size: Optional[torch.Tensor] = None):
         input_ids = input_ids.flatten()
@@ -166,11 +169,16 @@ class KBERTModel(PreTrainedModel):
         x0 = x
         v1 = None  # first layer value residual
 
+        value_embedding = self.value_embed(input_ids[None]).bfloat16()
+        x0 = norm(self.embed(input_ids[None]).bfloat16())
+        x = x0
+
         skip_connections = []
         for i in range(self.num_layers):
             if i >= self.num_encoder_layers:
                 x = x + self.skip_weights[i - self.num_encoder_layers] * skip_connections.pop()
-            x, v1 = self.blocks[i](x, v1, x0, block_mask)
+            ve = value_embedding if i in self.value_emb_layers else None
+            x = self.blocks[i](x, ve, x0, block_mask)
             if i < self.num_encoder_layers:
                 skip_connections.append(x)
 

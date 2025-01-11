@@ -187,7 +187,7 @@ def train(args, model, tokenizer):
 
     # collect the parameters to optimize
     adam_params = [
-        dict(params=[raw_model.encoder.embed.weight], lr=args.lr_embed),
+        dict(params=[raw_model.encoder.embed.weight, raw_model.encoder.value_embed.weight], lr=args.lr_embed),
         dict(params=[p for p in raw_model.encoder.parameters() if p.ndim < 2], lr=args.lr_scalar),
         dict(params=[p for m in raw_model.modules() for p in m.parameters() if isinstance(m, KBERTHead)], lr=args.lr_head)
     ]
