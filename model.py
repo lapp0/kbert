@@ -18,6 +18,7 @@ class ModelConfig(PretrainedConfig):
     num_attention_heads: int = 6
     model_dim: int = 768
     intermediate_dim: int = 768 * 2
+    logit_softcap: Optional[int] = 15
 
     def __init__(self, **kwargs):
         # ignore PretrainedConfig implicit attributes
@@ -177,6 +178,19 @@ class KBERTModel(PreTrainedModel):
         return x
 
 
+class KBERTHead(nn.Module):
+    def __init__(self, model_dim: int, vocab_size: int, softcap: Optional[int] = None):
+        super().__init__()
+        self.softcap = softcap
+        self.output_head = CastedLinear(model_dim, vocab_size)
+        self.output_head.weight.data.zero_()
+
+    def forward(self, x):
+        x = self.output_head(x)
+        if self.softcap is not None:
+            x = self.softcap * torch.tanh(x / self.softcap)
+        return x.float()
+
 class KBERTForMaskedLM(PreTrainedModel):
     config_class = ModelConfig
     _tied_weights_keys = ["lm_head.weight", "model.embed.weight"]
@@ -186,18 +200,9 @@ class KBERTForMaskedLM(PreTrainedModel):
         super().__init__(config)
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
         self.masker = MLMMasker(tokenizer)
-        self.model = KBERTModel(config, tokenizer)
-        self.vocab_size = self.model.vocab_size
-        self.lm_head = CastedLinear(config.model_dim, self.vocab_size)
-        self.lm_head.weight.data.zero_()
-        self.model.embed.weight = self.lm_head.weight  # tie weights
-
-    def get_logits(self, x: torch.Tensor) -> torch.Tensor:
-        x = norm(x)
-        logits = self.lm_head(x)
-        logits = 15 * torch.tanh(logits / 15)
-        logits = logits.float()
-        return logits
+        self.kbert_encoder = KBERTModel(config, tokenizer)
+        self.vocab_size = self.kbert_encoder.vocab_size
+        self.lm_head = KBERTHead(config.model_dim, self.vocab_size, softcap=config.logit_softcap)
 
     def forward(
             self,
@@ -207,8 +212,8 @@ class KBERTForMaskedLM(PreTrainedModel):
             mask_prob: torch.Tensor,
             keep_replace_prob: torch.Tensor) -> torch.Tensor:
         input_ids, labels = self.masker(input_ids, labels, mask_prob, keep_replace_prob)
-        last_hs = self.model(input_ids, sliding_window_size)
-        logits = self.get_logits(last_hs)
+        last_hs = self.kbert_encoder(input_ids, sliding_window_size)
+        logits = self.lm_head(last_hs)
         return F.cross_entropy(logits.view(-1, self.vocab_size), labels.view(-1).long())
 
 
@@ -218,22 +223,19 @@ class KBERTForSequenceClassification(PreTrainedModel):
     def __init__(self, config: "ModelConfig"):
         super().__init__(config)
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_uri)
+        self.bos_id = tokenizer.cls_token_id
         self.num_labels = config.num_labels
-        self.model = KBERTModel(config, tokenizer)
-        self.classifier_head = CastedLinear(config.model_dim, config.num_labels)
-        self.classifier_head.weight.data.zero_()
+        self.kbert_encoder = KBERTModel(config, tokenizer)
+        self.classifier_head = KBERTHead(config.model_dim, config.num_labels)
 
-    def get_logits(self, x: torch.Tensor) -> torch.Tensor:
-        x = norm(x)
-        logits = self.classifier_head(x)
-        logits = 15 * torch.tanh(logits / 15)
-        logits = logits.float()
-        return logits
-
-    def forward(self, input_ids: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        last_hs = self.model(input_ids)
-        logits = self.get_logits(last_hs)
+    def forward(self, input_ids: torch.Tensor, labels: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
+        last_hs = self.kbert_encoder(input_ids)
+        last_hs = norm(last_hs)
+        pooled = last_hs[:, input_ids == self.bos_id, :]  # filter last_hs, only considering cls token outputs
+        logits = self.classifier_head(pooled)
         loss = F.cross_entropy(logits.view(-1, self.num_labels), labels.view(-1).long())
+        if return_logits:
+            return loss, logits
         return loss
 
 
