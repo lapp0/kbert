@@ -185,21 +185,14 @@ def train(args, model, tokenizer):
     raw_model = model.module
 
     # collect the parameters to optimize
+    adam_params = [
+        dict(params=[raw_model.model.embed.weight], lr=args.lr_embed),
+        dict(params=[p for p in raw_model.model.parameters() if p.ndim < 2], lr=args.lr_scalar),
+        dict(params=[p for m in raw_model.modules() for p in m.parameters() if isinstance(m, KBERTHead)], lr=args.lr_head)
+    ]
     hidden_matrix_params = [p for p in raw_model.model.blocks.parameters() if p.ndim == 2]
-    muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)
-
-    adam_params = []
-    adam_params.append(dict(params=[raw_model.model.embed.weight], lr=args.lr_embed))
-    adam_params.append(dict(params=[p for p in raw_model.model.parameters() if p.ndim < 2], lr=args.lr_scalar))
-
-    head_params = [module.weight for name, module in raw_model.named_modules() if name.endswith("_head")]
-    if args.lr_head:
-        assert len(head_params) == 1
-        adam_params.append(dict(params=head_params, lr=args.lr_head))
-    elif head_params[0].data_ptr() != raw_model.lm_head.weight.data_ptr():
-        raise ValueError("Set args.lr_head or tie head to embeddings")
     adam_optimizer = torch.optim.Adam(adam_params, betas=(0.8, 0.95), fused=True)
-
+    muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)
     optimizers = [adam_optimizer, muon_optimizer]
 
     # learning rate decay scheduler (linear warmup and cooldown)
