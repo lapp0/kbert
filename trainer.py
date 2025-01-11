@@ -150,7 +150,7 @@ def train(args, model, tokenizer):
         def to_input_labels(seq):
             # Convert to sequence classification format by extracting class (pos 1) and removing format code (pos 2)
             bos_idxs = (seq == bos_id).nonzero(as_tuple=True)[0]
-            pure_labels = seq[bos_idxs + 1]
+            labels = seq[bos_idxs + 1].unsqueeze(0)
 
             assert seq[0].item() == bos_id, seq
             assert torch.all(seq[bos_idxs + 2] == torch.iinfo(torch.uint16).max)
@@ -162,13 +162,10 @@ def train(args, model, tokenizer):
             removed_count = (~mask).sum().item()
             seq = torch.cat([seq[mask], torch.full_like(seq[:removed_count], pad_id)])
 
-            bos_idxs = (seq == bos_id).nonzero(as_tuple=True)[0]
-            labels = torch.full_like(seq, fill_value=-100)
-            labels[bos_idxs] = pure_labels
             return seq, labels
 
-    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed)
-    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed)
+    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed, max_epochs=args.max_epochs)
+    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed, max_epochs=1)
 
     print0(f'Training DataLoader: {len(train_loader.files)} files')
     print0(f'Validation DataLoader: {len(valid_loader.files)} files')
@@ -281,15 +278,28 @@ def train(args, model, tokenizer):
             # run validation batches
             model.eval()
             valid_loader.reset()
-            val_loss, valid_tokens = 0.0, 0
+            val_loss, valid_tokens = torch.tensor(0.0, device="cuda"), torch.tensor(0, device="cuda")
+            if args.objective == "seq_classification":
+                accuracy, num_seqs = torch.tensor(0.0, device="cuda"), torch.tensor(0.0, device="cuda")
             with torch.no_grad():
                 val_inputs, val_labels = valid_loader.next_batch()
                 while val_inputs.numel():
-                    valid_tokens += len(val_inputs)
-                    val_loss += model(val_inputs, val_labels, *eval_fwd_args) * len(val_inputs)
+                    num_val_tokens = (val_inputs != pad_id).sum()
+                    valid_tokens += num_val_tokens
+                    if args.objective == "mlm":
+                        val_loss += model(val_inputs, val_labels, *eval_fwd_args) * num_val_tokens
+                    elif args.objective == "seq_classification":
+                        batch_loss, logits = model(val_inputs, val_labels, *eval_fwd_args, return_logits=True)
+                        val_loss += batch_loss * num_val_tokens
+                        accuracy += (logits.argmax(dim=-1) == val_labels).float().sum()
+                        num_seqs += val_labels.numel()
                     val_inputs, val_labels = valid_loader.next_batch()
             dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
             dist.all_reduce(valid_tokens, op=dist.ReduceOp.SUM)
+            if args.objective == "seq_classification":
+                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM)
+                dist.all_reduce(num_seqs, op=dist.ReduceOp.SUM)
+
             val_loss /= valid_tokens
             # log val loss to console and to logfile
             total_params, head_params = get_param_count(model)
