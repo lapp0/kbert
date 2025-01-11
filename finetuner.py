@@ -13,10 +13,15 @@ class FinetuneMNLIArguments(TrainingArguments):
     input_bin: str = "data/mnli/mnli_train_*.bin"
     input_valid_bin: str = "data/mnli/mnli_validation_*.bin"
 
-    lr_head: float = 0.001
-    lr_embed: float = 0.001
-    lr_scalar: float = 0.005
-    lr_hidden: float = 0.005
+    lr_head: float = 0.01
+    lr_embed: float = 0.01 / 4
+    lr_scalar: float = 0.005 / 4
+    lr_hidden: float = 0.005 / 4
+
+    batch_size: int = 8 * 1024
+    num_steps: int = 2_500
+    cooldown_steps: int = 2_000
+    warmup_steps: int = 100
 
     valid_loss_every: int = 10
     hf_model_name: str = "lapp0/kbert_finetuned_mlni"
@@ -36,12 +41,10 @@ if __name__ == "__main__":
     training_args = cl_args["train"]
     model_config = cl_args["model"]
 
-    import torch
-    with torch.autograd.detect_anomaly():
-        train(
-            args=training_args,
-            model=KBERTForSequenceClassification.from_pretrained(
-                training_args.base_model, config=model_config
-            ),
-            tokenizer=AutoTokenizer.from_pretrained(model_config.tokenizer_uri)
-        )
+    train(
+        args=training_args,
+        model=KBERTForSequenceClassification.from_pretrained(
+            training_args.base_model, config=model_config
+        ),
+        tokenizer=AutoTokenizer.from_pretrained(model_config.tokenizer_uri)
+    )
