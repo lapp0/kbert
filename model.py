@@ -19,6 +19,7 @@ class ModelConfig(PretrainedConfig):
     model_dim: int = 768
     intermediate_dim: int = 768 * 2
     logit_softcap: Optional[int] = 15
+    head_dropout: float = 0.0
 
     def __init__(self, **kwargs):
         # ignore PretrainedConfig implicit attributes
@@ -186,6 +187,7 @@ class KBERTHead(nn.Module):
         self.output_head.weight.data.zero_()
 
     def forward(self, x):
+        x = norm(x)
         x = self.output_head(x)
         if self.softcap is not None:
             x = self.softcap * torch.tanh(x / self.softcap)
@@ -226,14 +228,13 @@ class KBERTForSequenceClassification(PreTrainedModel):
         self.bos_id = tokenizer.cls_token_id
         self.num_labels = config.num_labels
         self.encoder = KBERTModel(config, tokenizer)
-
+        self.classifier_dropout = nn.Dropout(p=config.head_dropout)
         self.classifier_head = KBERTHead(config.model_dim, config.num_labels)
 
     def forward(self, input_ids: torch.Tensor, labels: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
         last_hs = self.encoder(input_ids)
-        last_hs = norm(last_hs)
         pooled = last_hs[:, input_ids == self.bos_id, :]  # filter last_hs, only considering cls token outputs
-        logits = self.classifier_head(pooled)
+        logits = self.classifier_head(self.classifier_dropout(pooled))
         loss = F.cross_entropy(logits.view(-1, self.num_labels), labels.view(-1).long())
         if return_logits:
             return loss, logits
