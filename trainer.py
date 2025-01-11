@@ -186,11 +186,11 @@ def train(args, model, tokenizer):
 
     # collect the parameters to optimize
     adam_params = [
-        dict(params=[raw_model.model.embed.weight], lr=args.lr_embed),
-        dict(params=[p for p in raw_model.model.parameters() if p.ndim < 2], lr=args.lr_scalar),
+        dict(params=[raw_model.encoder.embed.weight], lr=args.lr_embed),
+        dict(params=[p for p in raw_model.encoder.parameters() if p.ndim < 2], lr=args.lr_scalar),
         dict(params=[p for m in raw_model.modules() for p in m.parameters() if isinstance(m, KBERTHead)], lr=args.lr_head)
     ]
-    hidden_matrix_params = [p for p in raw_model.model.blocks.parameters() if p.ndim == 2]
+    hidden_matrix_params = [p for p in raw_model.encoder.blocks.parameters() if p.ndim == 2]
     adam_optimizer = torch.optim.Adam(adam_params, betas=(0.8, 0.95), fused=True)
     muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)
     optimizers = [adam_optimizer, muon_optimizer]
