@@ -242,6 +242,7 @@ def train(args, model, tokenizer):
         lerp_keep_replace_prob = LerpTensor(start_val=0.09, end_val=0.015, precision=0.0075)
         lerp_sw_size = LerpTensor(start_val=1024, end_val=args.max_length, precision=128)
 
+    train_tokens = 0
 
     # Start training loop
     training_time_ms = 0
@@ -332,6 +333,8 @@ def train(args, model, tokenizer):
         if last_step:
             break
 
+        train_tokens += (train_inputs != pad_id).sum()
+
         # --------------- FORWARD AND BACKWARD PASS -----------------
         model.train()
         for i in range(1, train_accumulation_steps + 1):
@@ -363,6 +366,8 @@ def train(args, model, tokenizer):
             approx_time = training_time_ms + 1000 * (time.perf_counter() - t0)
             print0(f'step:{step+1}/{args.num_steps} train_time:{approx_time:.0f}ms step_avg:{approx_time/timed_steps:.2f}ms')
 
+    dist.all_reduce(train_tokens, op=dist.ReduceOp.SUM)
+    print0(f'Total train tokens: {train_tokens:,}')
     print0(f'peak memory consumption training: {torch.cuda.max_memory_allocated() // 1024 // 1024 // 1024} GiB')
     print0(f'Train Time: {training_time_ms:.0f}ms | Step Avg: {training_time_ms/(timed_steps-1):.2f}ms')
     print0(f'Total train time (min): {training_time_ms / 60000:.2f}')
