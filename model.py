@@ -172,7 +172,7 @@ class KBERTModel(PreTrainedModel):
         for i in range(self.num_layers):
             if i >= self.num_encoder_layers:
                 x = x + self.skip_weights[i - self.num_encoder_layers] * skip_connections.pop()
-            vr = value_residuals[i - self.num_layers * 3 // 4] if i >= self.num_layers * 3 // 4 else None
+            vr = value_residuals.pop(0) if i >= self.num_layers * 3 // 4 else None
             x, v = self.blocks[i](x, vr, x0, block_mask)
             if i < self.num_layers // 4:
                 value_residuals.append(v)
