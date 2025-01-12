@@ -125,20 +125,12 @@ def train(args, model, tokenizer):
 
     # calculate the steps of gradient accumulation required to attain the desired global batch size
     # args.batch_size should refer to the total amount of tokens per backward pass
-    train_accumulation_steps = 1
-    batch_size = args.batch_size
 
-    assert ddp_world_size == 1 or args.grad_accum == 1, 'Cannot currently use both DDP and gradient accumulation'
-    if ddp_world_size > 1:
-        train_accumulation_steps = ddp_world_size
-        batch_size = args.batch_size // ddp_world_size
-    elif args.grad_accum > 1:
-        train_accumulation_steps *= args.grad_accum
-        batch_size = args.batch_size // args.grad_accum
+    batch_size = args.batch_size // (ddp_world_size * args.grad_accum)
 
-    print0(f'Train accumulation steps: {train_accumulation_steps}')
-    print0(f'Adjusted local batch size: {batch_size} tokens')
+    print0(f'Grad accumulation steps: {args.grad_accum}')
     print0(f'Across {ddp_world_size} GPUs')
+    print0(f'Adjusted local batch size: {batch_size} tokens')
     print0(f'Total batch size: {args.batch_size} tokens')
 
     # load tokens
@@ -337,9 +329,9 @@ def train(args, model, tokenizer):
 
         # --------------- FORWARD AND BACKWARD PASS -----------------
         model.train()
-        for i in range(1, train_accumulation_steps + 1):
+        for i in range(1, args.grad_accum + 1):
             with contextlib.ExitStack() as stack:
-                if ddp_world_size > 1 and i < train_accumulation_steps: # there's no need to sync gradients every accumulation step
+                if i < args.grad_accum: # there's no need to sync gradients every accumulation step
                     stack.enter_context(model.no_sync())
                 #if step >= 5:
                 #    stack.enter_context(torch.compiler.set_stance(skip_guard_eval_unsafe=True))
@@ -347,9 +339,8 @@ def train(args, model, tokenizer):
                     raise ValueError("out of training data, consider adding more epochs")
                 model(train_inputs, train_labels, *train_fwd_args).backward()
                 train_inputs, train_labels = train_loader.next_batch()
-        if train_accumulation_steps != 1:
-            for p in model.parameters():
-                p.grad /= train_accumulation_steps
+        for p in model.parameters():
+            p.grad /= args.grad_accum
         # momentum warmup for Muon
         frac = min(step/args.muon_momentum_warmup_steps, 1)
         for group in muon_optimizer.param_groups:
