@@ -1,8 +1,8 @@
 KBERT (Keller BERT, based on Keller Jordans modded-nanogpt) is an open-source project seeking to produce the pareto frontier of BERT models. The objective is to produce a BERT variant which surpasses ModernBERT-base's GLUE score in as few FLOPs as possible.
 
-Based on
-- [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt)
-- [SpeedRunningESM2](https://github.com/Synthyra/SpeedRunningESM2)
+Related Works
+- [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt): Introduces substantial architectural and preformance improvements to transformer training.
+- [SpeedRunningESM2](https://github.com/Synthyra/SpeedRunningESM2): Adapts modded-nanogpt into a BERT-like architecture for protein structure prediction.
 
 ## Quick Start
 
