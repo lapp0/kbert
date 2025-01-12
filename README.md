@@ -43,15 +43,15 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS trainer.py --train.hf_model_nam
 
 
 ## Benchmarks to match
-|                      | KBERT | DeBERTa-v3-base | ModernBERT-base |
-|----------------------|-------|-----------------|-----------------|
-| Training Tokens      | ?     | 800 billion*    | 1.7 trillion    |
-| **Metrics**          |       |                 |                 |
-| MNLI                 | ?     | ?               | ?               |
-| SQuAD v2.0           | ?     | ?               | ?               |
-| **Parameters**       | ?     | 185M            | 150M            |
-| Encoder Parameters   | ?     | 87M             | 111M            |
-| Embedding Parameters | ?     | 98M             | 39M             |
+|                      | KBERT | [DeBERTa-v3-base](https://arxiv.org/abs/2111.09543) | [ModernBERT-base](https://arxiv.org/abs/2412.13663) |
+|----------------------|-------|-----------------------------------------------------|-----------------------------------------------------|
+| Training Tokens      | ?     | 800 billion*                                        | 1.7 trillion                                        |
+| **Metrics**          |       |                                                     |                                                     |
+| MNLI                 | ?     | ?                                                   | ?                                                   |
+| SQuAD v2.0           | ?     | ?                                                   | ?                                                   |
+| **Parameters**       | ?     | 185M                                                | 150M                                                |
+| Encoder Parameters   | ?     | 87M                                                 | 111M                                                |
+| Embedding Parameters | ?     | 98M                                                 | 39M                                                 |
 
  *Estimate is based on papers stated 160GB of data @ 10 epochs
 
