@@ -15,7 +15,7 @@ pip install --pre torch==2.6.0.dev20250103+cu124 torchvision torchaudio --index-
 python data/download_fineweb_edu.py --num_chunks 120  # ~100M tokens / chunk
 python data/download_mnli.py
 
-export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+export N_GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 ```
 
 Save HF credentials (only need to run once):
@@ -25,12 +25,12 @@ huggingface-cli login
 
 #### Pretrain KBERT on Fineweb EDU with MLM objective
 ```
-torchrun --standalone --nproc_per_node=$NUM_GPUS trainer.py --train.hf_model_name HUB_MODEL_URI_HERE
+torchrun --standalone --nproc_per_node=$N_GPU trainer.py --train.hf_model_name HUB_MODEL_URI
 ```
 
 #### Finetune KBERT on MNLI with sequence classification objective
 ```
-torchrun --standalone --nproc_per_node=$NUM_GPUS finetuner.py --train.hf_model_name HUB_MODEL_URI_HERE
+torchrun --standalone --nproc_per_node=$N_GPU finetuner.py --train.hf_model_name HUB_MODEL_URI
 ```
 
 
