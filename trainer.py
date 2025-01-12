@@ -44,8 +44,8 @@ class TrainingArguments:
     grad_accum: int = 1
     num_steps: int = 17_500
     warmup_steps: int = 1000
-    cooldown_steps: int = 20_000
-    max_length: int = 2**16
+    cooldown_steps: int = 15_000
+    max_length: int = 8192
     max_epochs: int = None
 
     # adam
