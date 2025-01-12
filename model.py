@@ -14,10 +14,10 @@ from dataclasses import dataclass, fields
 @dataclass
 class ModelConfig(PretrainedConfig):
     tokenizer_uri: str = "answerdotai/ModernBERT-base"
-    num_layers: int = 12
+    num_layers: int = 16
     num_attention_heads: int = 6
     model_dim: int = 768
-    intermediate_dim: int = 768 * 2
+    intermediate_dim: int = 768 * 3 // 2
     logit_softcap: Optional[int] = 15
     head_dropout: float = 0.0
 
@@ -83,20 +83,20 @@ class SelfAttention(nn.Module):
         self.o_proj = CastedLinear(dim, dim)
         self.o_proj.weight.data.zero_()
 
-    def forward(self, x: torch.Tensor, ve: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, vr: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         B, T = x.size(0), x.size(1)  # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
         q = self.c_q(x).view(B, T, self.num_attention_heads, -1)
         k = self.c_k(x).view(B, T, self.num_attention_heads, -1)
         v = self.c_v(x).view(B, T, self.num_attention_heads, -1)
-        ve = v if ve is None else ve
-        v = self.lambdas[0] * v + self.lambdas[1] * ve.view_as(v)
+        vr = v if vr is None else vr
+        v = self.lambdas[0] * v + self.lambdas[1] * vr.view_as(v)
         q, k = norm(q), norm(k)
         q, k = self.rotary(q), self.rotary(k)
         y = flex_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), block_mask=block_mask)
         y = y.transpose(1, 2).contiguous().view_as(x)  # re-assemble all head outputs side by side
         y = self.o_proj(y)
-        return y
+        return y, v
 
 
 class MLP(nn.Module):
@@ -122,9 +122,10 @@ class Block(nn.Module):
 
     def forward(self, x: torch.Tensor, ve: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
         x = self.lambdas[0] * x + self.lambdas[1] * x0
-        x = x + self.attn(norm(x), ve, block_mask)
+        attn_out, v = self.attn(norm(x), ve, block_mask)
+        x = x + attn_out
         x = x + self.mlp(norm(x))
-        return x
+        return x, v
 
 
 class KBERTModel(PreTrainedModel):
@@ -138,10 +139,6 @@ class KBERTModel(PreTrainedModel):
         self.cls_id = tokenizer.cls_token_id
         self.vocab_size = (tokenizer.vocab_size // 256 + 1) * 256  # round up to nearest 256
 
-        # shared value embeddings betwen first 1/4 and last 1/4th of layers
-        self.value_emb_layers = [i for i in range(config.num_layers) if i * 4 // config.num_layers in (0, 3)]
-        self.value_embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
-
         self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
 
@@ -150,9 +147,8 @@ class KBERTModel(PreTrainedModel):
         self.num_encoder_layers = config.num_layers // 2  # Half of the layers for encoder
         self.skip_weights = nn.Parameter(torch.ones(self.num_encoder_layers))
 
-    def forward(self, input_ids, sliding_window_size: Optional[torch.Tensor] = None):
-        input_ids = input_ids.flatten()
-        docs = (input_ids == self.cls_id).cumsum(dim=0)  # shape: [S]
+    def get_encoder_block_mask(self, input_ids: torch.Tensor, sliding_window_size: Optional[torch.Tensor]):
+        docs = (input_ids == self.cls_id).cumsum(dim=0)
 
         def doc_mask_mod(b, h, q_idx, kv_idx):
             mask = docs[q_idx] == docs[kv_idx]
@@ -162,23 +158,24 @@ class KBERTModel(PreTrainedModel):
             return mask
 
         S = len(input_ids)
-        block_mask = create_block_mask(doc_mask_mod, None, None, S, S)
+        return create_block_mask(doc_mask_mod, None, None, S, S)
 
-        x = self.embed(input_ids[None]).bfloat16()
-        x = norm(x)
-        x0 = x
-        v1 = None  # first layer value residual
+    def forward(self, input_ids, sliding_window_size: Optional[torch.Tensor] = None):
+        input_ids = input_ids.flatten()
+        block_mask = self.get_encoder_block_mask(input_ids, sliding_window_size)
 
-        value_embedding = self.value_embed(input_ids[None]).bfloat16()
         x0 = norm(self.embed(input_ids[None]).bfloat16())
         x = x0
 
         skip_connections = []
+        value_residuals = []  # map value residuals from first 1/4th of layers to last 1/4th of layers
         for i in range(self.num_layers):
             if i >= self.num_encoder_layers:
                 x = x + self.skip_weights[i - self.num_encoder_layers] * skip_connections.pop()
-            ve = value_embedding if i in self.value_emb_layers else None
-            x = self.blocks[i](x, ve, x0, block_mask)
+            vr = value_residuals[i - self.num_layers * 3 // 4] if i >= self.num_layers * 3 // 4 else None
+            x, v = self.blocks[i](x, vr, x0, block_mask)
+            if i < self.num_layers // 4:
+                value_residuals.append(v)
             if i < self.num_encoder_layers:
                 skip_connections.append(x)
 
@@ -190,7 +187,6 @@ class KBERTHead(nn.Module):
         super().__init__()
         self.softcap = softcap
         self.output_head = CastedLinear(model_dim, vocab_size)
-        self.output_head.weight.data.zero_()
 
     def forward(self, x):
         x = norm(x)
@@ -203,6 +199,7 @@ class KBERTHead(nn.Module):
 class KBERTForMaskedLM(PreTrainedModel):
     config_class = ModelConfig
     ignore_keys = ["masker.standard_tokens", "masker.special_tokens"]
+    _tied_weights_keys = ["lm_head.output_head.weight", "encoder.embed.weight"]
 
     def __init__(self, config: "ModelConfig"):
         super().__init__(config)
@@ -211,6 +208,8 @@ class KBERTForMaskedLM(PreTrainedModel):
         self.encoder = KBERTModel(config, tokenizer)
         self.vocab_size = self.encoder.vocab_size
         self.lm_head = KBERTHead(config.model_dim, self.vocab_size, softcap=config.logit_softcap)
+
+        self.encoder.embed.weight = self.lm_head.output_head.weight
 
     def forward(
             self,
@@ -253,8 +252,8 @@ class MLMMasker(nn.Module):
         super().__init__()
         self.mask_token_id = tokenizer.mask_token_id
         standard_tokens = [tok_id for tok_id in tokenizer.vocab.values() if tok_id not in tokenizer.all_special_ids]
-        self.register_buffer("standard_tokens", torch.tensor(standard_tokens, dtype=torch.int32))
-        self.register_buffer("special_tokens", torch.tensor(tokenizer.all_special_ids, dtype=torch.int32))
+        self.standard_tokens = nn.Buffer(torch.tensor(standard_tokens, dtype=torch.int32), persistent=False)
+        self.special_tokens = nn.Buffer(torch.tensor(tokenizer.all_special_ids, dtype=torch.int32), persistent=False)
 
     def __call__(
             self, input_ids: torch.Tensor, labels: torch.Tensor, mask_prob: torch.Tensor, keep_replace_prob: torch.Tensor

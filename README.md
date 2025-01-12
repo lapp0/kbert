@@ -43,9 +43,17 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS trainer.py --train.hf_model_nam
 
 
 ## Benchmarks to match
-TODO
+|                      | KBERT | DeBERTa-v3-base | ModernBERT-base |
+|----------------------|-------|-----------------|-----------------|
+| Training Tokens      | ?     | 800 billion*    | 1.7 trillion    |
+| **Metrics**          |       |                 |                 |
+| MNLI                 | ?     | ?               | ?               |
+| SQuAD v2.0           | ?     | ?               | ?               |
+| **Parameters**       | ?     | 185M            | 150M            |
+| Encoder Parameters   | ?     | 87M             | 111M            |
+| Embedding Parameters | ?     | 98M             | 39M             |
 
-## Successful runs showcase
+ *Estimate is based on papers stated 160GB of data @ 10 epochs
 
 |~Matches |Parameters|Time      |Hardware |Log | Val loss | Test loss |
 |--------|----------|----------|---------|----|-----------|-----------|

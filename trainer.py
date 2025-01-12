@@ -42,35 +42,37 @@ class TrainingArguments:
     # Optimization hyperparams
     batch_size: int = 8*64*1024
     grad_accum: int = 1
-    num_steps: int = 25_000
+    num_steps: int = 17_500
     warmup_steps: int = 1000
-    cooldown_steps: int = 15_000
+    cooldown_steps: int = 20_000
     max_length: int = 2**16
+    max_epochs: int = None
 
     # adam
-    lr_head: float = 0.008 / 5
-    lr_embed: float = 0.6 / 5
-    lr_scalar: float = 0.05 / 5
+    lr_head: Optional[float] = None
+    lr_embed: float = 0.01
+    lr_scalar: float = 0.005
     # muon
-    lr_hidden: float = 0.05 / 5
+    lr_hidden: float = 0.005
     muon_momentum_warmup_steps: int = 300  # steps for warmup momentum, 0.85 -> 0.95
 
     objective: str = "mlm"
 
     # Evaluation and logging hyperparams
     valid_loss_every: int = 500
-    hf_model_name: Optional[str] = "lapp0/kbert_trial0"
+    hf_model_name: Optional[str] = "lapp0/kbert_trial1"
     save_every: Optional[int] = None
 
 
-def get_param_count(model):
-    total_params = 0
+def get_param_counts(model):
+    encoder_params = 0
     head_params = 0
     for name, param in model.named_parameters():
         if name.endswith("_head.weight"):
             head_params += param.numel()
-        total_params += param.numel()
-    return total_params, head_params
+        else:
+            encoder_params += param.numel()
+    return encoder_params, head_params
 
 
 # setup dist
@@ -187,14 +189,18 @@ def train(args, model, tokenizer):
 
     # collect the parameters to optimize
     adam_params = [
-        dict(params=[raw_model.encoder.embed.weight, raw_model.encoder.value_embed.weight], lr=args.lr_embed),
+        dict(params=[raw_model.lm_head.output_head.weight], lr=args.lr_embed),
         dict(params=[p for p in raw_model.encoder.parameters() if p.ndim < 2], lr=args.lr_scalar),
-        dict(params=[p for m in raw_model.modules() for p in m.parameters() if isinstance(m, KBERTHead)], lr=args.lr_head)
     ]
     hidden_matrix_params = [p for p in raw_model.encoder.blocks.parameters() if p.ndim == 2]
     adam_optimizer = torch.optim.Adam(adam_params, betas=(0.8, 0.95), fused=True)
     muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)
     optimizers = [adam_optimizer, muon_optimizer]
+
+    # assert all params tracked
+    optimizer_param_ids = {id(param) for opt in optimizers for group in opt.param_groups for param in group['params']}
+    for name, param in model.named_parameters():
+        assert id(param) in optimizer_param_ids, f"Parameter missing from optimizers: {name}"
 
     # learning rate decay scheduler (linear warmup and cooldown)
     def get_lr(it):
@@ -296,8 +302,8 @@ def train(args, model, tokenizer):
 
             val_loss /= valid_tokens
             # log val loss to console and to logfile
-            total_params, head_params = get_param_count(model)
-            print0(f'step:{step}/{args.num_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/(timed_steps-1):.2f}ms perplexity:{(math.e**val_loss):.4f} total_params:{total_params:,} head_params:{head_params:,} tokens: {valid_tokens.item():,}')
+            encoder_params, head_params = get_param_counts(model)
+            print0(f'step:{step}/{args.num_steps} val_loss:{val_loss:.4f} train_time:{training_time_ms:.0f}ms step_avg:{training_time_ms/(timed_steps-1):.2f}ms perplexity:{(math.e**val_loss):.4f} encoder_params:{encoder_params:,} head_params:{head_params:,} tokens: {valid_tokens.item():,}')
             if args.objective == "seq_classification":
                 print0(f"validation accuracy: {accuracy / num_seqs * 100:.2f}%")
             # start the clock again
@@ -358,7 +364,7 @@ def train(args, model, tokenizer):
             print0(f'step:{step+1}/{args.num_steps} train_time:{approx_time:.0f}ms step_avg:{approx_time/timed_steps:.2f}ms')
 
     print0(f'peak memory consumption training: {torch.cuda.max_memory_allocated() // 1024 // 1024 // 1024} GiB')
-    print0(f'Train Time: {training_time_ms:.0f}ms | Step Avg: {training_time_ms/(timed_steps-1):.2f}ms | Param Count: {get_param_count(model):,}')
+    print0(f'Train Time: {training_time_ms:.0f}ms | Step Avg: {training_time_ms/(timed_steps-1):.2f}ms')
     print0(f'Total train time (min): {training_time_ms / 60000:.2f}')
     print0(f'Total train time (hours): {training_time_ms / 3600000:.2f}')
 
