@@ -182,15 +182,14 @@ class KBERTModel(PreTrainedModel):
         return x
 
 
-class KBERTHead(nn.Module):
+class KBERTHead(CastedLinear):
     def __init__(self, model_dim: int, vocab_size: int, softcap: Optional[int] = None):
-        super().__init__()
+        super().__init__(model_dim, vocab_size)
         self.softcap = softcap
-        self.output_head = CastedLinear(model_dim, vocab_size)
 
     def forward(self, x):
         x = norm(x)
-        x = self.output_head(x)
+        x = super().forward(x)  # CastedLinear forward
         if self.softcap is not None:
             x = self.softcap * torch.tanh(x / self.softcap)
         return x.float()
@@ -209,7 +208,7 @@ class KBERTForMaskedLM(PreTrainedModel):
         self.vocab_size = self.encoder.vocab_size
         self.lm_head = KBERTHead(config.model_dim, self.vocab_size, softcap=config.logit_softcap)
 
-        self.encoder.embed.weight = self.lm_head.output_head.weight
+        self.encoder.embed.weight = self.lm_head.weight
 
     def forward(
             self,

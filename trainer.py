@@ -189,7 +189,7 @@ def train(args, model, tokenizer):
 
     # collect the parameters to optimize
     adam_params = [
-        dict(params=[raw_model.lm_head.output_head.weight], lr=args.lr_embed),
+        dict(params=[raw_model.lm_head.weight], lr=args.lr_embed),
         dict(params=[p for p in raw_model.encoder.parameters() if p.ndim < 2], lr=args.lr_scalar),
     ]
     hidden_matrix_params = [p for p in raw_model.encoder.blocks.parameters() if p.ndim == 2]
