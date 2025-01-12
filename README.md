@@ -56,6 +56,4 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS trainer.py
 
  *Estimate is based on papers stated 160GB of data @ 10 epochs
 
-|~Matches |Parameters|Time      |Hardware |Log | Val loss | Test loss |
-|--------|----------|----------|---------|----|-----------|-----------|
-TODO
+
