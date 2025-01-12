@@ -254,7 +254,7 @@ class MLMMasker(nn.Module):
         self.special_tokens = nn.Buffer(torch.tensor(tokenizer.all_special_ids, dtype=torch.int32), persistent=False)
 
     @torch.no_grad()
-    def __call__(
+    def forward(
             self, input_ids: torch.Tensor, labels: torch.Tensor, mask_prob: torch.Tensor, keep_replace_prob: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # include mlm_prob tokens in MLM objective
