@@ -1,6 +1,9 @@
-**KBERT** (Keller BERT) is an open-source project seeking to produce the pareto frontier of transformer encoder models. The objective is to produce a BERT variant which surpasses ModernBERT and DeBertaV3 on SQuAD v2.0 and MNLI in as few FLOPs as possible.
+**KBERT** (Keller BERT) is an open-source project for training the pareto frontier of transformer encoder models.
 
-Related Works
+Specifically, the goal is to produce a model which beats ModernBERT and DeBERTaV3 on both SQuAD v2.0 and MNLI with minimal compute.
+
+#### Related Works
+
 - [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt): Introduces substantial architectural and preformance improvements to transformer training.
 - [SpeedRunningESM2](https://github.com/Synthyra/SpeedRunningESM2): Adapts modded-nanogpt into a BERT-like architecture for protein structure prediction.
 
