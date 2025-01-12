@@ -103,10 +103,6 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
 
             sample = raw_tokens[curr_bos:sample_end]  # One sample: "CLS ... EOS"
 
-            # TODO: REMOVE
-            if sample[0] != 50281:
-                print(f"Warning: sample[0]=={sample[0]}, sample[-1]=={sample[-1]}, sample.numel()=={sample.numel()}")
-                print(f"\ti={i}, bos_positions[:i]=={bos_positions[:i]}")
             assert curr_batch_len < self.local_batch_size, str((curr_batch_len, self.local_batch_size))
 
             # if adding sample exceeds the batch size resulting in truncation, pad to end of batch, starting a fresh batch
@@ -128,6 +124,10 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             processed_chunks.append(sample)
             curr_batch_len += len(sample)
             curr_batch_len = 0 if curr_batch_len == self.local_batch_size else curr_batch_len
+
+        if curr_batch_len:
+            num_pad = self.local_batch_size - curr_batch_len
+            processed_chunks.append(torch.full((num_pad,), self.pad_id, dtype=torch.uint16))
 
         self._leftover_tokens = torch.empty(0, dtype=torch.uint16) if next_tokens is None else raw_tokens[sample_end + 1:]
         self.tokens = torch.cat(processed_chunks, dim=0)
