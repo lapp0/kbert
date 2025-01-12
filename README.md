@@ -1,4 +1,4 @@
-KBERT (Keller BERT, based on Keller Jordans modded-nanogpt) is an open-source project seeking to produce the pareto frontier of BERT models. The objective is to produce a BERT variant which surpasses ModernBERT-base's GLUE score in as few FLOPs as possible.
+KBERT (Keller BERT, based on Keller Jordans modded-nanogpt) is an open-source project seeking to produce the pareto frontier of encoder models. The objective is to produce a BERT variant which surpasses ModernBERT and DeBertaV3 on SQuAD v2.0 and MNLI in as few FLOPs as possible.
 
 Related Works
 - [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt): Introduces substantial architectural and preformance improvements to transformer training.
