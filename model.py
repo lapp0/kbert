@@ -197,7 +197,6 @@ class KBERTHead(CastedLinear):
 
 class KBERTForMaskedLM(PreTrainedModel):
     config_class = ModelConfig
-    ignore_keys = ["masker.standard_tokens", "masker.special_tokens"]
     _tied_weights_keys = ["lm_head.output_head.weight", "encoder.embed.weight"]
 
     def __init__(self, config: "ModelConfig"):
