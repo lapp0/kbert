@@ -4,8 +4,8 @@ Specifically, the goal is to produce a model which beats ModernBERT and DeBERTaV
 
 #### Related Works
 
-- [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt): Introduces substantial architectural and preformance improvements to transformer training.
-- [SpeedRunningESM2](https://github.com/Synthyra/SpeedRunningESM2): Adapts modded-nanogpt into a BERT-like architecture for protein structure prediction.
+- [modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt): Introduces substantial architectural and preformance improvements to gpt2 training.
+- [SpeedRunningESM2](https://github.com/Synthyra/SpeedRunningESM2): Adapts modded-nanogpt to encoder model for protein structure prediction.
 
 ## Quick Start
 
