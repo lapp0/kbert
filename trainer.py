@@ -22,7 +22,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
 from optimizer import Muon
-from model import KBERTForMaskedLM, KBERTHead, CastedLinear, ModelConfig
+from model import KBERTForMaskedLM, CastedLinear, ModelConfig
 from dataloading import DistributedPaddedDataLoader
 
 code = "Command: " + " ".join(sys.argv) + "\n"
@@ -126,11 +126,12 @@ def train(args, model, tokenizer):
     # calculate the steps of gradient accumulation required to attain the desired global batch size
     # args.batch_size should refer to the total amount of tokens per backward pass
 
-    batch_size = args.batch_size // (ddp_world_size * args.grad_accum)
+    local_mini_batch_size = args.batch_size // (ddp_world_size * args.grad_accum_per_device)
 
-    print0(f'Grad accumulation steps: {args.grad_accum}')
+    print0(f'Grad accumulation steps per device: {args.grad_accum_per_device}')
     print0(f'Across {ddp_world_size} GPUs')
-    print0(f'Adjusted local batch size: {batch_size} tokens')
+    print0(f'Totaling {ddp_world_size * args.grad_accum_per_device} steps across devices per train step.')
+    print0(f'Adjusted local mini batch size: {local_mini_batch_size} tokens')
     print0(f'Total batch size: {args.batch_size} tokens')
 
     # load tokens
@@ -159,8 +160,8 @@ def train(args, model, tokenizer):
 
             return seq, labels
 
-    train_loader = DistributedPaddedDataLoader(args.input_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed, max_epochs=args.max_epochs)
-    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed, max_epochs=1)
+    train_loader = DistributedPaddedDataLoader(args.input_bin, local_mini_batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed, max_epochs=args.max_epochs)
+    valid_loader = DistributedPaddedDataLoader(args.input_valid_bin, local_mini_batch_size, ddp_rank, ddp_world_size, bos_id=bos_id, pad_id=pad_id, to_input_labels=to_input_labels, allow_windowed=allow_windowed, max_epochs=1)
 
     print0(f'Training DataLoader: {len(train_loader.files)} files')
     print0(f'Validation DataLoader: {len(valid_loader.files)} files')
@@ -325,22 +326,17 @@ def train(args, model, tokenizer):
         if last_step:
             break
 
-        train_tokens += (train_inputs != pad_id).sum()
+        with torch.no_grad():
+            train_tokens += (train_inputs != pad_id).sum()
 
         # --------------- FORWARD AND BACKWARD PASS -----------------
         model.train()
-        for i in range(1, args.grad_accum + 1):
-            with contextlib.ExitStack() as stack:
-                if i < args.grad_accum: # there's no need to sync gradients every accumulation step
-                    stack.enter_context(model.no_sync())
-                #if step >= 5:
-                #    stack.enter_context(torch.compiler.set_stance(skip_guard_eval_unsafe=True))
-                if not train_inputs.numel():
-                    raise ValueError("out of training data, consider adding more epochs")
+        for i in range(args.grad_accum_per_device):
+            with model.no_sync() if i < (args.grad_accum_per_device - 1) else contextlib.nullcontext():
                 model(train_inputs, train_labels, *train_fwd_args).backward()
                 train_inputs, train_labels = train_loader.next_batch()
         for p in model.parameters():
-            p.grad /= args.grad_accum
+            p.grad /= (args.grad_accum_per_device * ddp_world_size)
         # momentum warmup for Muon
         frac = min(step/args.muon_momentum_warmup_steps, 1)
         for group in muon_optimizer.param_groups:
