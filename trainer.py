@@ -40,8 +40,8 @@ class TrainingArguments:
     input_valid_bin: str = "data/fineweb-edu/fwedu_valid_*.bin"
 
     # Optimization hyperparams
-    batch_size: int = 8*64*1024
-    grad_accum: int = 1
+    batch_size: int = 8 * 64 * 1024   # split into (num devices * accum steps) local mini batches
+    grad_accum_per_device: int = 4
     num_steps: int = 17_500
     warmup_steps: int = 1000
     cooldown_steps: int = 15_000
