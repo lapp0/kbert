@@ -39,16 +39,6 @@ torchrun --standalone --nproc_per_node=$N_GPU finetune.py \
   --train.hf_model_name FINETUNED_HF_URI
 ```
 
-
-### Push to Huggingface Hub While Training
-
-1)
-2) Specify your own HF model URI for training:
-```
-torchrun --standalone --nproc_per_node=$NUM_GPUS trainer.py
-```
-
-
 ## Benchmarks to match
 |                      | KBERT-base | [DeBERTa-v3-base](https://arxiv.org/abs/2111.09543) | [ModernBERT-base](https://arxiv.org/abs/2412.13663) |
 |----------------------|------------|-----------------------------------------------------|-----------------------------------------------------|
