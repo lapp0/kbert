@@ -3,3 +3,4 @@ tqdm
 torch
 transformers
 datasets
+huggingface-hub==0.27.1
