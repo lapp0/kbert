@@ -100,7 +100,7 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
             sample = raw_tokens[curr_bos:sample_end]  # One sample: "CLS ... EOS"
 
             # if adding sample exceeds the batch size resulting in truncation, pad to end of batch, starting a fresh batch
-            if len(sample) + curr_batch_len >= self.local_mini_batch_size:
+            if curr_batch_len and len(sample) + curr_batch_len >= self.local_mini_batch_size:
                 num_pad = self.local_mini_batch_size - curr_batch_len
                 processed_chunks.append(torch.full((num_pad,), self.pad_id, dtype=torch.uint16))
                 curr_batch_len = 0
