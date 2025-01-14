@@ -17,7 +17,7 @@ class ModelConfig(PretrainedConfig):
     num_layers: int = 20
     num_attention_heads: int = 6
     model_dim: int = 768
-    intermediate_dim: int = 768 * 5 // 3
+    intermediate_dim: int = 2048
     logit_softcap: Optional[int] = 15
     head_dropout: float = 0.0
 
