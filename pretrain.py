@@ -63,21 +63,21 @@ class PretrainingArguments(TrainingArguments):
     input_valid_bin: str = "data/fineweb-edu/fwedu_valid_*.bin"
 
     # Optimization hyperparams
-    batch_size: int = 8 * 64 * 1024   # split into (num devices * accum steps) local mini batches
-    grad_accum_per_device: int = 4  # Optimal setting for 4x4090. 1x4090 -> 16, 2x4090 -> 8, 8x4090 -> 2
-    num_steps: int = 17_500
-    warmup_steps: int = 1000
-    cooldown_steps: int = 15_000
-    max_length: int = 8192
+    batch_size: int = 4 * 64 * 1024 * 3 // 2
+    grad_accum_per_device: int = 4
+    num_steps: int = 100_000
+    warmup_steps: int = 4_000
+    cooldown_steps: int = 90_000
+    max_length: int = 8_192
     max_epochs: int = None
-    valid_loss_every: int = 500
+    valid_loss_every: int = 1000
 
     # adam
     lr_head: Optional[float] = None
-    lr_embed: float = 0.01
-    lr_scalar: float = 0.005
+    lr_embed: float = 0.004
+    lr_scalar: float = 0.002
     # muon
-    lr_hidden: float = 0.005
+    lr_hidden: float = 0.002
     muon_momentum_warmup_steps: int = 300  # steps for warmup momentum, 0.85 -> 0.95
 
     hf_model_name: Optional[str] = "lapp0/kbert_base"
