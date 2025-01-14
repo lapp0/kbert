@@ -28,12 +28,15 @@ huggingface-cli login
 
 #### Pretrain KBERT on Fineweb EDU with MLM objective
 ```
-torchrun --standalone --nproc_per_node=$N_GPU pretrain.py --train.hf_model_name HUB_MODEL_URI
+torchrun --standalone --nproc_per_node=$N_GPU pretrain.py \
+  --train.hf_model_name PRETRAINED_HF_URI
 ```
 
 #### Finetune KBERT on MNLI with sequence classification objective
 ```
-torchrun --standalone --nproc_per_node=$N_GPU finetune.py --train.hf_model_name HUB_MODEL_URI
+torchrun --standalone --nproc_per_node=$N_GPU finetune.py \
+  --train.base_model PRETRAINED_HF_URI
+  --train.hf_model_name FINETUNED_HF_URI
 ```
 
 
@@ -47,16 +50,15 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS trainer.py
 
 
 ## Benchmarks to match
-|                      | KBERT | [DeBERTa-v3-base](https://arxiv.org/abs/2111.09543) | [ModernBERT-base](https://arxiv.org/abs/2412.13663) |
-|----------------------|-------|-----------------------------------------------------|-----------------------------------------------------|
-| Training Tokens      | ?     | 800 billion*                                        | 1.7 trillion                                        |
-| **Metrics**          |       |                                                     |                                                     |
-| MNLI                 | ?     | ?                                                   | ?                                                   |
-| SQuAD v2.0           | ?     | ?                                                   | ?                                                   |
-| **Parameters**       | ?     | 185M                                                | 150M                                                |
-| Encoder Parameters   | ?     | 87M                                                 | 111M                                                |
-| Embedding Parameters | ?     | 98M                                                 | 39M                                                 |
+|                      | KBERT-base | [DeBERTa-v3-base](https://arxiv.org/abs/2111.09543) | [ModernBERT-base](https://arxiv.org/abs/2412.13663) |
+|----------------------|------------|-----------------------------------------------------|-----------------------------------------------------|
+| Training Tokens      | ?          | 400 billion*                                        | 1.7 trillion                                        |
+| **Metrics**          |            |                                                     |                                                     |
+| MNLI                 | ?          | ?                                                   | ?                                                   |
+| SQuAD v2.0           | ?          | ?                                                   | ?                                                   |
+| **Parameters**       | 150M       | 185M                                                | **150M**                                            |
+| Encoder Parameters   | 106M       | 87M                                                 | 111M                                                |
+| Embedding Parameters | 39M        | 98M                                                 | 39M                                                 |
 
- *Estimate is based on papers stated 160GB of data @ 10 epochs
-
+ *Estimate is based on papers stated "160GB of data" @ 10 epochs, (estimated 4 bytes per token)
 

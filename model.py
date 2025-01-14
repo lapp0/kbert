@@ -14,10 +14,10 @@ from dataclasses import dataclass, fields
 @dataclass
 class ModelConfig(PretrainedConfig):
     tokenizer_uri: str = "answerdotai/ModernBERT-base"
-    num_layers: int = 16
+    num_layers: int = 20
     num_attention_heads: int = 6
     model_dim: int = 768
-    intermediate_dim: int = 768 * 3 // 2
+    intermediate_dim: int = 768 * 5 // 3
     logit_softcap: Optional[int] = 15
     head_dropout: float = 0.0
 
