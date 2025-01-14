@@ -336,7 +336,7 @@ def train(args, model, tokenizer):
                 model(train_inputs, train_labels, *train_fwd_args).backward()
                 train_inputs, train_labels = train_loader.next_batch()
         for p in model.parameters():
-            p.grad /= (args.grad_accum_per_device * ddp_world_size)
+            p.grad /= args.grad_accum_per_device  # DDP averages, local accum steps SUM
         # momentum warmup for Muon
         frac = min(step/args.muon_momentum_warmup_steps, 1)
         for group in muon_optimizer.param_groups:
