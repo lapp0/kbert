@@ -28,12 +28,12 @@ huggingface-cli login
 
 #### Pretrain KBERT on Fineweb EDU with MLM objective
 ```
-torchrun --standalone --nproc_per_node=$N_GPU trainer.py --train.hf_model_name HUB_MODEL_URI
+torchrun --standalone --nproc_per_node=$N_GPU pretrain.py --train.hf_model_name HUB_MODEL_URI
 ```
 
 #### Finetune KBERT on MNLI with sequence classification objective
 ```
-torchrun --standalone --nproc_per_node=$N_GPU finetuner.py --train.hf_model_name HUB_MODEL_URI
+torchrun --standalone --nproc_per_node=$N_GPU finetune.py --train.hf_model_name HUB_MODEL_URI
 ```
 
 

@@ -19,14 +19,12 @@ def _load_data_shard(file: Path):
 
 
 class DistributedDataLoader:
-    def __init__(self, filename_pattern: str, local_mini_batch_size: int, rank: int, world_size: int, to_input_labels: Optional[callable] = None):
+    def __init__(self, filename_pattern: str, local_mini_batch_size: int, rank: int, world_size: int):
         self.world_size = world_size
         self.rank = rank
         self.files = sorted(Path.cwd().glob(filename_pattern))
         self.local_mini_batch_size = local_mini_batch_size  # single accumulation step on a single device
         self.global_mini_batch_size = world_size * local_mini_batch_size  # a single accumulation step across all devices
-
-        self.to_input_labels = to_input_labels
 
         self.reset()
 
@@ -47,16 +45,13 @@ class DistributedDataLoader:
         self.pos += self.global_mini_batch_size
         if self.pos + self.global_mini_batch_size >= len(self.tokens):
             self.advance()
-        if self.to_input_labels is None or not sequence.numel():
-            return sequence, sequence.clone()
-        else:
-            return self.to_input_labels(sequence)
+        return sequence
 
 
 class DistributedPaddedDataLoader(DistributedDataLoader):
     def __init__(
             self, filename_pattern, local_mini_batch_size, rank, world_size,
-            bos_id, pad_id, max_epochs=1, to_input_labels=None, allow_windowed=False
+            bos_id, pad_id, max_epochs=1, allow_windowed=False
     ):
         self.bos_id = bos_id
         self.pad_id = pad_id
@@ -64,7 +59,7 @@ class DistributedPaddedDataLoader(DistributedDataLoader):
         self.max_epochs = max_epochs
         self._leftover_tokens = torch.empty(0, dtype=torch.uint16)
         self._curr_epoch = 0
-        super().__init__(filename_pattern, local_mini_batch_size, rank, world_size, to_input_labels=to_input_labels)
+        super().__init__(filename_pattern, local_mini_batch_size, rank, world_size)
 
     def advance(self):
         self.pos = 0
