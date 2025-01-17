@@ -196,7 +196,7 @@ class KBERTModel(PreTrainedModel):
             pos_ids = torch.arange(input_ids.size(0), dtype=torch.long, device=input_ids.device)
         block_mask = self.get_encoder_block_mask(input_ids, pos_ids, sliding_window_size)
         x0 = norm(self.embed(input_ids[None]).bfloat16())
-        return norm(self.encoder_pass(x0, block_mask))
+        return norm(self.encoder_pass(x0, block_mask, pos_ids))
 
 
 class KBERTHead(CastedLinear):
