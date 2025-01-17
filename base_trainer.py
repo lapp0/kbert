@@ -232,12 +232,11 @@ class BaseTrainer:
         val_loss = torch.tensor(0.0, device="cuda")
         valid_tokens = torch.tensor(0, device="cuda")
 
-        pad_id = self.tokenizer.pad_token_id
         with torch.no_grad():
             val_batch = self.next_batch(train=False)
             while val_batch is not None:
                 val_inputs = val_batch["input_ids"]
-                num_val_tokens = (val_inputs != pad_id).sum()
+                num_val_tokens = (val_inputs != self.tokenizer.pad_token_id).sum()
                 valid_tokens += num_val_tokens
                 val_loss += self.model(**val_batch) * num_val_tokens
                 val_batch = self.next_batch(train=False)
@@ -283,12 +282,13 @@ class BaseTrainer:
         seq = self.train_loader.next_batch() if train else self.valid_loader.next_batch()
         if not seq.numel():
             return None
-        with torch.no_grad():
-            self.train_tokens += (seq != self.tokenizer.pad_token_id).sum()
+        if train:
+            with torch.no_grad():
+                self.train_token_count += (seq != self.tokenizer.pad_token_id).sum()
         return seq
 
     def train(self):
-        self.train_tokens = 0
+        self.train_token_count = 0
 
         self.training_time_ms = 0
         torch.cuda.synchronize()
@@ -320,8 +320,8 @@ class BaseTrainer:
                        f'step_avg:{approx_time / timed_steps:.2f}ms')
 
         # final logging
-        dist.all_reduce(self.train_tokens, op=dist.ReduceOp.SUM)
-        print0(f'Total train tokens: {self.train_tokens:,}')  # includes the next batch which isn't actually trained on
+        dist.all_reduce(self.train_token_count, op=dist.ReduceOp.SUM)
+        print0(f'Total train tokens: {self.train_token_count:,}')  # includes the next batch which isn't actually trained on
 
         print0(f'peak memory consumption training:\n{torch.cuda.max_memory_allocated() // 1024 // 1024 // 1024} GiB')
         print0(f'Train Time: {self.training_time_ms:.0f}ms '
