@@ -331,7 +331,11 @@ class BaseTrainer:
         print0(f'Total train time (hours): {self.training_time_ms / 3600000:.2f}')
 
         if self.args.hf_model_name is not None:
-            self.model.module.push_to_hub(self.args.hf_model_name)
+            try:
+                self.model.module.push_to_hub(self.args.hf_model_name)
+            except Exception as e:
+                self.model.module.save_pretrained("model_save_hub_push_failure")
+                raise e
 
 
 def parse_args(dataclass_map=None):
