@@ -47,27 +47,23 @@ class CastedLinear(nn.Linear):
 
 
 class Rotary(nn.Module):
-    def __init__(self, dim, base=10000):
+    def __init__(self, dim: int, max_seq_len=65536):
         super().__init__()
-        self.register_buffer('inv_freq', (1 / base) ** (torch.arange(0, dim, 2) / dim))
-        self.seq_len_cached = None
-        self.cos_cached = None
-        self.sin_cached = None
+        # half-truncate RoPE by @YouJiacheng (w/ base freq tuning)
+        angular_freq = (1 / 1024) ** torch.linspace(0, 1, steps=dim // 4, dtype=torch.float32)
+        angular_freq = torch.cat([angular_freq, angular_freq.new_zeros(dim // 4)])
+        t = torch.arange(max_seq_len, dtype=torch.float32)
+        theta = torch.einsum("i,j -> ij", t, angular_freq)
+        self.cos = nn.Buffer(theta.cos(), persistent=False)
+        self.sin = nn.Buffer(theta.sin(), persistent=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        seq_len = x.shape[1]
-        if seq_len != self.seq_len_cached:
-            t = torch.arange(seq_len, device=x.device)
-            freqs = torch.outer(t, self.inv_freq)
-            self.seq_len_cached = seq_len
-            self.cos_cached = freqs.cos()
-            self.sin_cached = freqs.sin()
-        cos, sin = self.cos_cached[None, :, None, :], self.sin_cached[None, :, None, :]
-        # apply_rotary_emb(x, cos, sin)
-        x1, x2 = x.chunk(2, dim=3)
+    def forward(self, x: torch.Tensor, pos_ids: torch.Tensor):
+        cos = self.cos[pos_ids, None, :]
+        sin = self.sin[pos_ids, None, :]
+        x1, x2 = x.to(dtype=torch.float32).chunk(2, dim=-1)
         y1 = x1 * cos + x2 * sin
         y2 = x1 * (-sin) + x2 * cos
-        return torch.cat((y1, y2), 3).type_as(x)
+        return torch.cat((y1, y2), dim=-1).type_as(x)
 
 
 class SelfAttention(nn.Module):
@@ -83,7 +79,13 @@ class SelfAttention(nn.Module):
         self.o_proj = CastedLinear(dim, dim)
         self.o_proj.weight.data.zero_()
 
-    def forward(self, x: torch.Tensor, vr: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+            self,
+            x: torch.Tensor,
+            vr: torch.Tensor,
+            block_mask: torch.Tensor,
+            pos_ids: Optional[torch.Tensor]
+    ) -> torch.Tensor:
         B, T = x.size(0), x.size(1)  # batch size, sequence length
         assert B == 1, "Must use batch size = 1 for FlexAttention"
         q = self.c_q(x).view(B, T, self.num_attention_heads, -1)
@@ -92,7 +94,7 @@ class SelfAttention(nn.Module):
         vr = v if vr is None else vr
         v = self.lambdas[0] * v + self.lambdas[1] * vr.view_as(v)
         q, k = norm(q), norm(k)
-        q, k = self.rotary(q), self.rotary(k)
+        q, k = self.rotary(q, pos_ids), self.rotary(k, pos_ids)
         y = flex_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), block_mask=block_mask)
         y = y.transpose(1, 2).contiguous().view_as(x)  # re-assemble all head outputs side by side
         y = self.o_proj(y)
@@ -120,9 +122,16 @@ class Block(nn.Module):
         self.mlp = MLP(config.model_dim, config.intermediate_dim)
         self.lambdas = nn.Parameter(torch.tensor([1., 0.]))
 
-    def forward(self, x: torch.Tensor, ve: torch.Tensor, x0: torch.Tensor, block_mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+            self,
+            x: torch.Tensor,
+            ve: torch.Tensor,
+            x0: torch.Tensor,
+            block_mask: torch.Tensor,
+            pos_ids: torch.Tensor
+    ) -> torch.Tensor:
         x = self.lambdas[0] * x + self.lambdas[1] * x0
-        attn_out, v = self.attn(norm(x), ve, block_mask)
+        attn_out, v = self.attn(norm(x), ve, block_mask, pos_ids)
         x = x + attn_out
         x = x + self.mlp(norm(x))
         return x, v
@@ -138,8 +147,9 @@ class KBERTModel(PreTrainedModel):
 
         self.cls_id = tokenizer.cls_token_id
         self.vocab_size = (tokenizer.vocab_size // 256 + 1) * 256  # round up to nearest 256
+        self.model_dim = config.model_dim
 
-        self.embed = nn.Embedding(self.vocab_size, config.model_dim, padding_idx=tokenizer.pad_token_id)
+        self.embed = nn.Embedding(self.vocab_size, self.model_dim, padding_idx=tokenizer.pad_token_id)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.num_layers)])
 
         # U-net design by with learnable skip connection weights for decoder layers
@@ -147,8 +157,13 @@ class KBERTModel(PreTrainedModel):
         self.num_encoder_layers = config.num_layers // 2  # Half of the layers for encoder
         self.skip_weights = nn.Parameter(torch.ones(self.num_encoder_layers))
 
-    def get_encoder_block_mask(self, input_ids: torch.Tensor, sliding_window_size: Optional[torch.Tensor]):
-        docs = (input_ids == self.cls_id).cumsum(dim=0)
+    def get_encoder_block_mask(
+            self,
+            input_ids: torch.Tensor,
+            pos_ids: torch.Tensor,
+            sliding_window_size: Optional[torch.Tensor]
+    ):
+        docs = (input_ids[pos_ids] == self.cls_id).cumsum(dim=0)
 
         def doc_mask_mod(b, h, q_idx, kv_idx):
             mask = docs[q_idx] == docs[kv_idx]
@@ -160,26 +175,28 @@ class KBERTModel(PreTrainedModel):
         S = len(input_ids)
         return create_block_mask(doc_mask_mod, None, None, S, S)
 
-    def forward(self, input_ids, sliding_window_size: Optional[torch.Tensor] = None):
-        input_ids = input_ids.flatten()
-        block_mask = self.get_encoder_block_mask(input_ids, sliding_window_size)
-
-        x0 = norm(self.embed(input_ids[None]).bfloat16())
-        x = x0
-
+    def encoder_pass(self, x0, block_mask, pos_ids):
         skip_connections = []
         value_residuals = []  # map value residuals from first 1/4th of layers to last 1/4th of layers
+        x = x0
         for i in range(self.num_layers):
             if i >= self.num_encoder_layers:
                 x = x + self.skip_weights[i - self.num_encoder_layers] * skip_connections.pop()
             vr = value_residuals.pop(0) if i >= self.num_layers * 3 // 4 else None
-            x, v = self.blocks[i](x, vr, x0, block_mask)
+            x, v = self.blocks[i](x, vr, x0, block_mask, pos_ids)
             if i < self.num_layers // 4:
                 value_residuals.append(v)
             if i < self.num_encoder_layers:
                 skip_connections.append(x)
-
         return x
+
+    def forward(self, input_ids, sliding_window_size: torch.Tensor = None, pos_ids: torch.Tensor = None):
+        input_ids = input_ids.flatten()
+        if pos_ids is None:
+            pos_ids = torch.arange(input_ids.size(0), dtype=torch.long, device=input_ids.device)
+        block_mask = self.get_encoder_block_mask(input_ids, pos_ids, sliding_window_size)
+        x0 = norm(self.embed(input_ids[None]).bfloat16())
+        return norm(self.encoder_pass(x0, block_mask))
 
 
 class KBERTHead(CastedLinear):
@@ -188,7 +205,6 @@ class KBERTHead(CastedLinear):
         self.softcap = softcap
 
     def forward(self, x):
-        x = norm(x)
         x = super().forward(x)  # CastedLinear forward
         if self.softcap is not None:
             x = self.softcap * torch.tanh(x / self.softcap)
@@ -223,7 +239,7 @@ class KBERTForMaskedLM(PreTrainedModel):
 
 
 class KBERTForSequenceClassification(PreTrainedModel):
-    config_class = ModelConfig
+    config_class = SequenceClassificationModelConfig
 
     def __init__(self, config: "ModelConfig"):
         super().__init__(config)
