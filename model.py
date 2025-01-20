@@ -171,12 +171,13 @@ class KBERTModel(PreTrainedModel):
     ):
         docs = (input_ids[pos_ids] == self.cls_id).cumsum(dim=0)
 
+        if sliding_window_size is None:
+            sliding_window_size = torch.tensor(torch.iinfo(torch.int32).max, device=input_ids.device)
+
         def doc_mask_mod(b, h, q_idx, kv_idx):
-            mask = docs[q_idx] == docs[kv_idx]
-            if sliding_window_size is not None:
-                bidirectional_sliding_window_mask = torch.abs(q_idx - kv_idx) < sliding_window_size
-                mask = mask & bidirectional_sliding_window_mask
-            return mask
+            doc_mask = docs[q_idx] == docs[kv_idx]
+            bidirectional_sliding_window_mask = torch.abs(q_idx - kv_idx) < sliding_window_size
+            return doc_mask & bidirectional_sliding_window_mask
 
         S = len(input_ids)
         return create_block_mask(doc_mask_mod, None, None, S, S)
