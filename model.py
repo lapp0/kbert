@@ -42,6 +42,12 @@ class CastedLinear(nn.Linear):
     def __init__(self, in_features, out_features):
         super().__init__(in_features, out_features, bias=False)
 
+    def reset_parameters(self) -> None:
+        std = 0.5 * (self.in_features ** -0.5)
+        bound = (3 ** 0.5) * std
+        with torch.no_grad():
+            self.weight.uniform_(-bound, bound)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x, self.weight.to(x.dtype))
 
