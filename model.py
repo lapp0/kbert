@@ -255,8 +255,12 @@ class KBERTForSequenceClassification(PreTrainedModel):
         self.encoder = KBERTModel(config, tokenizer)
         self.classifier_dropout = nn.Dropout(p=config.head_dropout)
         self.classifier_head = KBERTHead(config.model_dim, config.num_labels)
-
         self.classifier_head.weight.data.zero_()
+
+        self.loss_fn = torch.nn.CrossEntropyLoss(
+            weight=torch.tensor(config.class_weights) if config.class_weights else None,
+            label_smoothing=config.label_smoothing
+        )
 
         # HACK, handle tied weights (TODO: do this correctly)
         self.lm_head = KBERTHead(config.model_dim, self.encoder.vocab_size, softcap=config.logit_softcap)
@@ -269,7 +273,7 @@ class KBERTForSequenceClassification(PreTrainedModel):
         last_hs = self.encoder(input_ids)
         logits = self.classifier_head(self.classifier_dropout(last_hs))
         logits = logits[:, input_ids == self.bos_id, :]
-        loss = F.cross_entropy(logits.view(-1, self.num_labels), labels.view(-1).long())
+        loss = self.loss_fn(logits.view(-1, self.num_labels), labels.view(-1).long())
         if return_logits:
             return loss, logits
         return loss

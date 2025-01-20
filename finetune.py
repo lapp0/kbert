@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import math
 import time
+import typing
 
 import torch
 import torch.distributed as dist
@@ -110,6 +111,13 @@ class MNLISequenceClassificationModelConfig(SequenceClassificationModelConfig):
     num_labels: int = 3
     softcap: float = None
     head_dropout: float = 0.5
+    label_smoothing: float = 0.00
+
+    # dataset is balanced, no class weights applied here
+    # >>> ds = datasets.load_dataset("nyu-mll/glue", "mnli")
+    # >>> collections.Counter(ds["train"]["label"])
+    # Counter({2: 130903, 1: 130900, 0: 130899})
+    class_weights: typing.Optional[typing.List[float]] = None
 
 
 if __name__ == "__main__":
