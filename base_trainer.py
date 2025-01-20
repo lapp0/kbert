@@ -17,12 +17,15 @@ import uuid
 
 import torch
 import torch.distributed as dist
-import torch._inductor.config as config
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from dataloading import DistributedPaddedDataLoader
 from model import CastedLinear, ModelConfig
 from optimizer import Muon
+
+# turn this on for a slightly faster run, but slower compile
+torch._inductor.config.coordinate_descent_tuning = False
+
 
 
 # setup dist
@@ -161,7 +164,6 @@ class BaseTrainer:
         for m in model.modules():
             if isinstance(m, CastedLinear):
                 m.float()
-        config.coordinate_descent_tuning = True
         model = torch.compile(model)
         model = DDP(model, device_ids=[ddp_local_rank], broadcast_buffers=False, gradient_as_bucket_view=True)
         return model
@@ -225,11 +227,9 @@ class BaseTrainer:
         for group in self.muon_optimizer.param_groups:
             group['momentum'] = (1 - frac) * 0.85 + frac * 0.95
 
-        # Step both optimizers, then schedulers
-        for opt, sched in zip(self.optimizers, self.schedulers):
+        for i, (opt, sched) in enumerate(zip(self.optimizers, self.schedulers)):
             opt.step()
             sched.step()
-
         self.model.zero_grad(set_to_none=True)
 
     @torch.no_grad()
