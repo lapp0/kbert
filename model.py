@@ -213,7 +213,7 @@ class KBERTHead(CastedLinear):
 
 class KBERTForMaskedLM(PreTrainedModel):
     config_class = ModelConfig
-    _tied_weights_keys = ["lm_head.output_head.weight", "encoder.embed.weight"]
+    _tied_weights_keys = ["lm_head.weight", "encoder.embed.weight"]
 
     def __init__(self, config: "ModelConfig"):
         super().__init__(config)
@@ -250,10 +250,19 @@ class KBERTForSequenceClassification(PreTrainedModel):
         self.classifier_dropout = nn.Dropout(p=config.head_dropout)
         self.classifier_head = KBERTHead(config.model_dim, config.num_labels)
 
+        self.classifier_head.weight.data.zero_()
+
+        # HACK, handle tied weights (TODO: do this correctly)
+        self.lm_head = KBERTHead(config.model_dim, self.encoder.vocab_size, softcap=config.logit_softcap)
+        self.encoder.embed.weight = self.lm_head.weight
+        def post_init(self, *args, **kwargs):
+            super().post_init(*args, **kwargs)
+            del self.lm_head
+
     def forward(self, input_ids: torch.Tensor, labels: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
         last_hs = self.encoder(input_ids)
-        pooled = last_hs[:, input_ids == self.bos_id, :]  # filter last_hs, only considering cls token outputs
-        logits = self.classifier_head(self.classifier_dropout(pooled))
+        logits = self.classifier_head(self.classifier_dropout(last_hs))
+        logits = logits[:, input_ids == self.bos_id, :]
         loss = F.cross_entropy(logits.view(-1, self.num_labels), labels.view(-1).long())
         if return_logits:
             return loss, logits

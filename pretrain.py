@@ -65,19 +65,19 @@ class PretrainingArguments(TrainingArguments):
     # Optimization hyperparams
     batch_size: int = 4 * 64 * 1024 * 3 // 2
     grad_accum_per_device: int = 4
-    num_steps: int = 100_000
-    warmup_steps: int = 4_000
-    cooldown_steps: int = 90_000
+    num_steps: int = 50_000
+    warmup_steps: int = 2_000
+    cooldown_steps: int = 40_000
     max_length: int = 8_192
     max_epochs: int = None
     valid_loss_every: int = 1000
 
     # adam
     lr_head: Optional[float] = None
-    lr_embed: float = 0.004
-    lr_scalar: float = 0.002
+    lr_embed: float = 0.006
+    lr_scalar: float = 0.003
     # muon
-    lr_hidden: float = 0.002
+    lr_hidden: float = 0.003
     muon_momentum_warmup_steps: int = 300  # steps for warmup momentum, 0.85 -> 0.95
 
     hf_model_name: Optional[str] = "lapp0/kbert_base"

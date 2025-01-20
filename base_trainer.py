@@ -82,13 +82,13 @@ class TrainingArguments:
     num_steps: int
     warmup_steps: int
     cooldown_steps: int
-    max_length: int
-    max_epochs: Optional[int]
 
     # Evaluation and logging hyperparams
     valid_loss_every: int
     hf_model_name: Optional[str]
     save_every: Optional[int] = None
+
+    max_epochs: Optional[int] = None
 
     # adam
     lr_head: Optional[float] = None
@@ -171,12 +171,20 @@ class BaseTrainer:
         Initializes Muon + Adam optimizers and returns them along with their LR schedulers.
         """
         adam_params = [
-            dict(params=[raw_model.lm_head.weight], lr=args.lr_embed),
             dict(params=[p for p in raw_model.encoder.parameters() if p.ndim < 2], lr=args.lr_scalar),
+            dict(params=[raw_model.encoder.embed.weight], lr=args.lr_embed)
         ]
-        hidden_matrix_params = [p for p in raw_model.encoder.blocks.parameters() if p.ndim == 2]
+        head_params = [
+            p for name, p in raw_model.named_parameters()
+            if name.endswith("_head.weight") and id(p) != id(raw_model.encoder.embed.weight)
+        ]
+        if head_params:
+            adam_params.append(dict(params=head_params, lr=args.lr_head))
         adam_optimizer = torch.optim.Adam(adam_params, betas=(0.8, 0.95), fused=True)
+
+        hidden_matrix_params = [p for p in raw_model.encoder.blocks.parameters() if p.ndim == 2]
         muon_optimizer = Muon(hidden_matrix_params, lr=args.lr_hidden, momentum=0.95)
+
         optimizers = [adam_optimizer, muon_optimizer]
 
         def get_lr(it):
@@ -224,6 +232,7 @@ class BaseTrainer:
 
         self.model.zero_grad(set_to_none=True)
 
+    @torch.no_grad()
     def validation_step(self, step, timed_steps):
         torch.cuda.synchronize()
         self.training_time_ms += 1000 * (time.perf_counter() - self.t0)
@@ -232,14 +241,13 @@ class BaseTrainer:
         val_loss = torch.tensor(0.0, device="cuda")
         valid_tokens = torch.tensor(0, device="cuda")
 
-        with torch.no_grad():
+        val_batch = self.next_batch(train=False)
+        while val_batch is not None:
+            val_inputs = val_batch["input_ids"]
+            num_val_tokens = (val_inputs != self.tokenizer.pad_token_id).sum()
+            valid_tokens += num_val_tokens
+            val_loss += self.model(**val_batch) * num_val_tokens
             val_batch = self.next_batch(train=False)
-            while val_batch is not None:
-                val_inputs = val_batch["input_ids"]
-                num_val_tokens = (val_inputs != self.tokenizer.pad_token_id).sum()
-                valid_tokens += num_val_tokens
-                val_loss += self.model(**val_batch) * num_val_tokens
-                val_batch = self.next_batch(train=False)
 
         dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
         dist.all_reduce(valid_tokens, op=dist.ReduceOp.SUM)
@@ -314,7 +322,7 @@ class BaseTrainer:
             self.train_step(self.step)
 
             # occasional runtime log
-            if self.step % 100 == 0:
+            if self.step % 10 == 0:
                 approx_time = self.training_time_ms + 1000 * (time.perf_counter() - self.t0)
                 print0(f'step:{self.step + 1}/{self.args.num_steps} train_time:{approx_time:.0f}ms '
                        f'step_avg:{approx_time / timed_steps:.2f}ms')
