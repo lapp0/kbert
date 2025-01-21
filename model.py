@@ -272,10 +272,10 @@ class KBERTForSequenceClassification(PreTrainedModel):
     def forward(self, input_ids: torch.Tensor, labels: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
         last_hs = self.encoder(input_ids)
         logits = self.classifier_head(self.classifier_dropout(last_hs))
-        logits = logits[:, input_ids == self.bos_id, :]
-        loss = self.loss_fn(logits.view(-1, self.num_labels), labels.view(-1).long())
+        full_labels = torch.full_like(input_ids, -100).masked_scatter(input_ids == self.bos_id, labels).long()
+        loss = self.loss_fn(logits.view(-1, logits.size(-1)), full_labels.view(-1))
         if return_logits:
-            return loss, logits
+            return loss, logits[:, input_ids == self.bos_id, :]
         return loss
 
 
