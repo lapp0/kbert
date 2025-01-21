@@ -13,7 +13,7 @@ Setup environment, dependencies, and data
 ```
 git clone https://github.com/lapp0/kbert && cd kbert
 pip install -r requirements.txt
-pip install --pre torch==2.6.0.dev20250103+cu124 torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124 --upgrade
+pip install --pre torch==2.7.0.dev20250110+cu124 --index-url https://download.pytorch.org/whl/nightly/cu124 --upgrade
 
 python data/download_fineweb_edu.py --num_chunks 120  # ~100M tokens / chunk
 python data/download_mnli.py
