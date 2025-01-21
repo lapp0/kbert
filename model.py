@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 from transformers import AutoTokenizer, PreTrainedModel, PreTrainedTokenizer, PretrainedConfig
 from dataclasses import dataclass, fields
 
@@ -32,6 +32,9 @@ class ModelConfig(PretrainedConfig):
 class SequenceClassificationModelConfig(ModelConfig):
     architectures = ("KBERTForSequenceClassification",)
     num_labels: int
+    head_dropout: float = 0.0
+    label_smoothing: float = 0.0
+    class_weights: Optional[List[float]] = None
 
 
 def norm(x: torch.Tensor) -> torch.Tensor:
@@ -247,6 +250,7 @@ class KBERTForMaskedLM(PreTrainedModel):
 
 class KBERTForSequenceClassification(PreTrainedModel):
     config_class = SequenceClassificationModelConfig
+    _tied_weights_keys = ["lm_head.weight", "encoder.embed.weight"]  # TODO: figure out how to handle this properly
 
     def __init__(self, config: "ModelConfig"):
         super().__init__(config)
@@ -272,7 +276,7 @@ class KBERTForSequenceClassification(PreTrainedModel):
     def forward(self, input_ids: torch.Tensor, labels: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
         last_hs = self.encoder(input_ids)
         logits = self.classifier_head(self.classifier_dropout(last_hs))
-        full_labels = torch.full_like(input_ids, -100).masked_scatter(input_ids == self.bos_id, labels).long()
+        full_labels = torch.full_like(input_ids, -100, dtype=torch.long).masked_scatter(input_ids == self.bos_id, labels)
         loss = self.loss_fn(logits.view(-1, logits.size(-1)), full_labels.view(-1))
         if return_logits:
             return loss, logits[:, input_ids == self.bos_id, :]
