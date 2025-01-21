@@ -83,7 +83,7 @@ class SelfAttention(nn.Module):
         self.lambdas = nn.Parameter(torch.tensor([0.5, 0.5]))
         self.rotary = Rotary(dim // num_attention_heads)
         self.o_proj = CastedLinear(dim, dim)
-        self.o_proj.weight.data.zero_()
+        self.o_proj.weight.detach().zero_()
 
     def forward(
             self,
@@ -112,7 +112,7 @@ class MLP(nn.Module):
         super().__init__()
         self.up = CastedLinear(dim, intermediate_dim)
         self.down = CastedLinear(intermediate_dim, dim)
-        self.down.weight.data.zero_()
+        self.down.weight.detach().zero_()
         self.relu = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -256,9 +256,8 @@ class KBERTForSequenceClassification(PreTrainedModel):
         self.encoder = KBERTModel(config, tokenizer)
         self.classifier_dropout = nn.Dropout(p=config.head_dropout)
         self.classifier_head = KBERTHead(config.model_dim, config.num_labels)
-        self.classifier_head.weight.data.zero_()
 
-        self.loss_fn = torch.nn.CrossEntropyLoss(
+        self.loss_fn = nn.CrossEntropyLoss(
             weight=torch.tensor(config.class_weights) if config.class_weights else None,
             label_smoothing=config.label_smoothing
         )
