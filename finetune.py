@@ -35,7 +35,7 @@ class SeqClassificationTrainer(BaseTrainer):
 
         return {
             "input_ids": seq,
-            "labels": labels
+            "labels": labels.long()
         }
 
     @torch.no_grad()
