@@ -176,7 +176,7 @@ class KBERTModel(PreTrainedModel):
 
         def doc_mask_mod(b, h, q_idx, kv_idx):
             doc_mask = docs[q_idx] == docs[kv_idx]
-            bidirectional_sliding_window_mask = torch.abs(q_idx - kv_idx) < sliding_window_size
+            bidirectional_sliding_window_mask = torch.abs(pos_ids[q_idx] - pos_ids[kv_idx]) < sliding_window_size
             return doc_mask & bidirectional_sliding_window_mask
 
         S = len(input_ids)
