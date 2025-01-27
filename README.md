@@ -42,7 +42,7 @@ torchrun --standalone --nproc_per_node=$N_GPU finetune.py \
 ## Benchmarks
 |                      | KBERT-base | [DeBERTa-v3-base](https://arxiv.org/abs/2111.09543) | [ModernBERT-base](https://arxiv.org/abs/2412.13663) |
 |----------------------|------------|-----------------------------------------------------|-----------------------------------------------------|
-| Training Tokens      | ?          | 400 billion*                                        | 1.7 trillion                                        |
+| Training Tokens      | 42 billion | 400 billion*                                        | 1.7 trillion                                        |
 | **Metrics**          |            |                                                     |                                                     |
 | MNLI Acc%            | 85.64%     | ?                                                   | ?                                                   |
 | SQuAD v2.0           | ?          | ?                                                   | ?                                                   |
