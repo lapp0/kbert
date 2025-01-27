@@ -44,7 +44,7 @@ torchrun --standalone --nproc_per_node=$N_GPU finetune.py \
 |----------------------|------------|-----------------------------------------------------|-----------------------------------------------------|
 | Training Tokens      | ?          | 400 billion*                                        | 1.7 trillion                                        |
 | **Metrics**          |            |                                                     |                                                     |
-| MNLI                 | 1.8564          | ?                                                   | ?                                                   |
+| MNLI Acc%            | 85.64%     | ?                                                   | ?                                                   |
 | SQuAD v2.0           | ?          | ?                                                   | ?                                                   |
 | **Parameters**       | 150M       | 185M                                                | **150M**                                            |
 | Encoder Parameters   | 106M       | 87M                                                 | 111M                                                |
